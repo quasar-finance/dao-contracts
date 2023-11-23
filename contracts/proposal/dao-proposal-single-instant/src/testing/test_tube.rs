@@ -1,12 +1,14 @@
 #[cfg(test)]
 pub mod test_tube {
-    use std::any;
     use std::collections::HashMap;
 
-    use cosmwasm_std::Coin;
+    use cosmwasm_std::{Coin, Uint128};
+    use cw_utils::Duration;
     use dao_interface::msg::ExecuteMsg::UpdateProposalModules;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
     use dao_interface::state::ModuleInstantiateInfo;
+    use dao_voting::pre_propose::PreProposeInfo;
+    use dao_voting::threshold::Threshold;
     use osmosis_test_tube::Account;
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
 
@@ -54,29 +56,40 @@ pub mod test_tube {
                 "dao-dao-core",
                 "./test-tube-build/wasm32-unknown-unknown/release/dao_dao_core.wasm",
                 InstantiateMsgVariant::Core(InstantiateMsgCore {
-                    admin: todo!(),
-                    name: todo!(),
-                    description: todo!(),
-                    image_url: todo!(),
-                    automatically_add_cw20s: todo!(),
-                    automatically_add_cw721s: todo!(),
-                    voting_module_instantiate_info: todo!(),
-                    proposal_modules_instantiate_info: todo!(),
-                    initial_items: todo!(),
-                    dao_uri: todo!(),
+                    admin: Some(admin.address()),
+                    name: "DAO DAO Core".to_string(),
+                    description: "".to_string(),
+                    image_url: None,
+                    automatically_add_cw20s: true,
+                    automatically_add_cw721s: true,
+                    voting_module_instantiate_info: ModuleInstantiateInfo {
+                        code_id: (),
+                        msg: (),
+                        admin: Some(admin.address()),
+                        funds: vec![],
+                        label: "label".to_string(),
+                    },
+                    proposal_modules_instantiate_info: vec![],
+                    initial_items: None,
+                    dao_uri: None,
                 }),
             ),
             (
                 "dao-proposal-single-instant",
                 "./test-tube-build/wasm32-unknown-unknown/release/dao_proposal_single_instant.wasm",
                 InstantiateMsgVariant::SingleChoiceInstant(InstantiateMsgSingleChoiceInstant {
-                    threshold: todo!(),
-                    max_voting_period: todo!(),
-                    min_voting_period: todo!(),
-                    only_members_execute: todo!(),
-                    allow_revoting: todo!(),
-                    pre_propose_info: todo!(),
-                    close_proposal_on_execution_failure: todo!(),
+                    threshold: Threshold::AbsoluteCount{ threshold: Uint128::new(1u128) },
+                    // TODO: Create an additional test variant as below
+                    // threshold: Threshold::ThresholdQuorum {
+                    //     threshold: PercentageThreshold,
+                    //     quorum: PercentageThreshold,
+                    // },
+                    max_voting_period: Duration::Time(0), // 0 seconds
+                    min_voting_period: None,
+                    only_members_execute: true,
+                    allow_revoting: false,
+                    pre_propose_info: PreProposeInfo::AnyoneMayPropose{},
+                    close_proposal_on_execution_failure: true,
                 }),
             ),
         ];
