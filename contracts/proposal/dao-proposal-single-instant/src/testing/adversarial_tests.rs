@@ -1,10 +1,7 @@
 use crate::msg::InstantiateMsg;
 use crate::testing::instantiate::get_pre_propose_info;
 use crate::testing::{
-    execute::{
-        close_proposal, execute_proposal, execute_proposal_should_fail, make_proposal, mint_cw20s,
-        vote_on_proposal,
-    },
+    execute::{close_proposal, make_proposal, mint_cw20s},
     instantiate::{
         get_default_token_dao_proposal_module_instantiate,
         instantiate_with_staked_balances_governance,

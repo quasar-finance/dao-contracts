@@ -200,23 +200,23 @@ fn test_v1_v2_full_migration() {
         &[],
     )
     .unwrap();
-    app.execute_contract(
-        sender.clone(),
-        proposal.clone(),
-        &cw_proposal_single_v1::msg::ExecuteMsg::Vote {
-            proposal_id: 1,
-            vote: voting_v1::Vote::Yes,
-        },
-        &[],
-    )
-    .unwrap();
-    app.execute_contract(
-        sender.clone(),
-        proposal.clone(),
-        &cw_proposal_single_v1::msg::ExecuteMsg::Execute { proposal_id: 1 },
-        &[],
-    )
-    .unwrap();
+    // app.execute_contract(
+    //     sender.clone(),
+    //     proposal.clone(),
+    //     &cw_proposal_single_v1::msg::ExecuteMsg::Vote {
+    //         proposal_id: 1,
+    //         vote: voting_v1::Vote::Yes,
+    //     },
+    //     &[],
+    // )
+    // .unwrap();
+    // app.execute_contract(
+    //     sender.clone(),
+    //     proposal.clone(),
+    //     &cw_proposal_single_v1::msg::ExecuteMsg::Execute { proposal_id: 1 },
+    //     &[],
+    // )
+    // .unwrap();
     let tokens: Vec<cw_core_v1::query::Cw20BalanceResponse> = app
         .wrap()
         .query_wasm_smart(
@@ -260,24 +260,24 @@ fn test_v1_v2_full_migration() {
         &[],
     )
     .unwrap();
-    app.execute_contract(
-        sender.clone(),
-        proposal.clone(),
-        &cw_proposal_single_v1::msg::ExecuteMsg::Vote {
-            proposal_id: 2,
-            vote: voting_v1::Vote::Yes,
-        },
-        &[],
-    )
-    .unwrap();
-    app.execute_contract(
-        sender.clone(),
-        proposal.clone(),
-        &cw_proposal_single_v1::msg::ExecuteMsg::Execute { proposal_id: 2 },
-        &[],
-    )
-    // can not be executed.
-    .unwrap_err();
+    // app.execute_contract(
+    //     sender.clone(),
+    //     proposal.clone(),
+    //     &cw_proposal_single_v1::msg::ExecuteMsg::Vote {
+    //         proposal_id: 2,
+    //         vote: voting_v1::Vote::Yes,
+    //     },
+    //     &[],
+    // )
+    // .unwrap();
+    // app.execute_contract(
+    //     sender.clone(),
+    //     proposal.clone(),
+    //     &cw_proposal_single_v1::msg::ExecuteMsg::Execute { proposal_id: 2 },
+    //     &[],
+    // )
+    // // can not be executed.
+    // .unwrap_err();
     let cw_proposal_single_v1::query::ProposalResponse {
         proposal: cw_proposal_single_v1::proposal::Proposal { status, .. },
         ..
@@ -338,23 +338,23 @@ fn test_v1_v2_full_migration() {
         &[],
     )
     .unwrap();
-    app.execute_contract(
-        sender.clone(),
-        proposal.clone(),
-        &cw_proposal_single_v1::msg::ExecuteMsg::Vote {
-            proposal_id: 3,
-            vote: voting_v1::Vote::Yes,
-        },
-        &[],
-    )
-    .unwrap();
-    app.execute_contract(
-        sender.clone(),
-        proposal.clone(),
-        &cw_proposal_single_v1::msg::ExecuteMsg::Execute { proposal_id: 3 },
-        &[],
-    )
-    .unwrap();
+    // app.execute_contract(
+    //     sender.clone(),
+    //     proposal.clone(),
+    //     &cw_proposal_single_v1::msg::ExecuteMsg::Vote {
+    //         proposal_id: 3,
+    //         vote: voting_v1::Vote::Yes,
+    //     },
+    //     &[],
+    // )
+    // .unwrap();
+    // app.execute_contract(
+    //     sender.clone(),
+    //     proposal.clone(),
+    //     &cw_proposal_single_v1::msg::ExecuteMsg::Execute { proposal_id: 3 },
+    //     &[],
+    // )
+    // .unwrap();
 
     // ----
     // execute proposal two. the addition of

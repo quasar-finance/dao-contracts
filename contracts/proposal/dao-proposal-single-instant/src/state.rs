@@ -7,6 +7,15 @@ use dao_voting::{pre_propose::ProposalCreationPolicy, threshold::Threshold, voti
 
 use crate::proposal::SingleChoiceProposal;
 
+/// A vote cast for an instant proposal containing message_hash and message_signature.
+#[cw_serde]
+pub struct VoteSignature {
+    /// Message hash
+    pub message_hash: &[u8], // TODO: Check lifetime
+    /// Signature of message hash
+    pub signature: &[u8], // TODO: Check lifetime
+}
+
 /// A vote cast for a proposal.
 #[cw_serde]
 pub struct Ballot {

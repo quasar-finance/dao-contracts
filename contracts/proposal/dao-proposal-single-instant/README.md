@@ -1,7 +1,7 @@
-# dao-proposal-instant
+# dao-proposal-single-instant
 
-[![dao-proposal-instant on crates.io](https://img.shields.io/crates/v/dao-proposal-instant.svg?logo=rust)](https://crates.io/crates/dao-proposal-instant)
-[![docs.rs](https://img.shields.io/docsrs/dao-proposal-instant?logo=docsdotrs)](https://docs.rs/dao-proposal-instant/latest/dao_proposal_instant/)
+[![dao-proposal-single-instant on crates.io](https://img.shields.io/crates/v/dao-proposal-single-instant.svg?logo=rust)](https://crates.io/crates/dao-proposal-single-instant)
+[![docs.rs](https://img.shields.io/docsrs/dao-proposal-single-instant?logo=docsdotrs)](https://docs.rs/dao-proposal-single-instant/latest/dao_proposal_single_instant/)
 
 A proposal module for a DAO DAO DAO which supports simple "yes", "no",
 "abstain" voting. Proposals may have associated messages which will be

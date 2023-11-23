@@ -1,10 +1,12 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
+use cosmwasm_std::{CosmosMsg, Empty};
 use cw_utils::Duration;
 use dao_dao_macros::proposal_module_query;
 use dao_voting::{
     pre_propose::PreProposeInfo, proposal::SingleChoiceProposeMsg, threshold::Threshold,
-    voting::Vote,
 };
+
+use crate::state::VoteSignature;
 
 #[cw_serde]
 pub struct InstantiateMsg {
@@ -40,22 +42,42 @@ pub struct InstantiateMsg {
     pub close_proposal_on_execution_failure: bool,
 }
 
+/// TODO: Move this outside this module. Try finding the best place to include inside dao_proposal_single_instant
+#[cw_serde]
+pub struct SingleChoiceInstantProposeMsg {
+    /// The title of the proposal.
+    pub title: String,
+    /// A description of the proposal.
+    pub description: String,
+    /// The messages that should be executed in response to this
+    /// proposal passing.
+    pub msgs: Vec<CosmosMsg<Empty>>,
+    /// The address creating the proposal. If no pre-propose
+    /// module is attached to this module this must always be None
+    /// as the proposer is the sender of the propose message. If a
+    /// pre-propose module is attached, this must be Some and will
+    /// set the proposer of the proposal it creates.
+    pub proposer: Option<String>,
+    /// TODO: doc
+    pub votes: Vec<VoteSignature>,
+}
+
 #[cw_serde]
 pub enum ExecuteMsg {
     /// Creates a proposal in the module.
-    Propose(SingleChoiceProposeMsg),
+    Propose(SingleChoiceInstantProposeMsg),
     /// Votes on a proposal. Voting power is determined by the DAO's
     /// voting power module.
-    Vote {
-        /// The ID of the proposal to vote on.
-        proposal_id: u64,
-        /// The senders position on the proposal.
-        vote: Vote,
-        /// An optional rationale for why this vote was cast. This can
-        /// be updated, set, or removed later by the address casting
-        /// the vote.
-        rationale: Option<String>,
-    },
+    // Vote {
+    //     /// The ID of the proposal to vote on.
+    //     proposal_id: u64,
+    //     /// The senders position on the proposal.
+    //     vote: Vote,
+    //     /// An optional rationale for why this vote was cast. This can
+    //     /// be updated, set, or removed later by the address casting
+    //     /// the vote.
+    //     rationale: Option<String>,
+    // },
     /// Updates the sender's rationale for their vote on the specified
     /// proposal. Errors if no vote vote has been cast.
     UpdateRationale {
@@ -64,10 +86,10 @@ pub enum ExecuteMsg {
     },
     /// Causes the messages associated with a passed proposal to be
     /// executed by the DAO.
-    Execute {
-        /// The ID of the proposal to execute.
-        proposal_id: u64,
-    },
+    // Execute {
+    //     /// The ID of the proposal to execute.
+    //     proposal_id: u64,
+    // },
     /// Closes a proposal that has failed (either not passed or timed
     /// out). If applicable this will cause the proposal deposit
     /// associated wth said proposal to be returned.

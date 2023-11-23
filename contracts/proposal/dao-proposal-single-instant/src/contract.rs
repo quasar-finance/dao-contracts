@@ -1,10 +1,16 @@
+use std::collections::HashMap;
+
+use cosmwasm_crypto::secp256k1_recover_pubkey;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order, Reply,
     Response, StdResult, Storage, SubMsg, WasmMsg,
 };
+
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
+use cw4::MemberListResponse;
+use cw4_group::msg::QueryMsg::ListMembers;
 use cw_hooks::Hooks;
 use cw_proposal_single_v1 as v1;
 use cw_storage_plus::Bound;
@@ -13,9 +19,7 @@ use dao_hooks::proposal::{new_proposal_hooks, proposal_status_changed_hooks};
 use dao_hooks::vote::new_vote_hooks;
 use dao_interface::voting::IsActiveResponse;
 use dao_voting::pre_propose::{PreProposeInfo, ProposalCreationPolicy};
-use dao_voting::proposal::{
-    SingleChoiceProposeMsg as ProposeMsg, DEFAULT_LIMIT, MAX_PROPOSAL_SIZE,
-};
+use dao_voting::proposal::{DEFAULT_LIMIT, MAX_PROPOSAL_SIZE};
 use dao_voting::reply::{
     failed_pre_propose_module_hook_id, mask_proposal_execution_proposal_id, TaggedReplyId,
 };
@@ -23,9 +27,9 @@ use dao_voting::status::Status;
 use dao_voting::threshold::Threshold;
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
 
-use crate::msg::MigrateMsg;
+use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
 use crate::proposal::{next_proposal_id, SingleChoiceProposal};
-use crate::state::{Config, CREATION_POLICY};
+use crate::state::{Config, VoteSignature, CREATION_POLICY};
 
 use crate::v1_state::{
     v1_duration_to_v2, v1_expiration_to_v2, v1_status_to_v2, v1_threshold_to_v2, v1_votes_to_v2,
@@ -96,22 +100,23 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Propose(ProposeMsg {
+        ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
             title,
             description,
             msgs,
             proposer,
-        }) => execute_propose(deps, env, info.sender, title, description, msgs, proposer),
-        ExecuteMsg::Vote {
-            proposal_id,
-            vote,
-            rationale,
-        } => execute_vote(deps, env, info, proposal_id, vote, rationale),
+            votes,
+        }) => execute_propose(deps, env, info, title, description, msgs, proposer, votes),
+        // ExecuteMsg::Vote {
+        //     proposal_id,
+        //     vote,
+        //     rationale,
+        // } => execute_vote(deps, env, info, proposal_id, vote, rationale),
         ExecuteMsg::UpdateRationale {
             proposal_id,
             rationale,
         } => execute_update_rationale(deps, info, proposal_id, rationale),
-        ExecuteMsg::Execute { proposal_id } => execute_execute(deps, env, info, proposal_id),
+        //ExecuteMsg::Execute { proposal_id } => execute_execute(deps, env, info, proposal_id),
         ExecuteMsg::Close { proposal_id } => execute_close(deps, env, info, proposal_id),
         ExecuteMsg::UpdateConfig {
             threshold,
@@ -149,19 +154,20 @@ pub fn execute(
 }
 
 pub fn execute_propose(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
-    sender: Addr,
+    info: MessageInfo,
     title: String,
     description: String,
     msgs: Vec<CosmosMsg<Empty>>,
     proposer: Option<String>,
+    vote_signatures: Vec<VoteSignature>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     let proposal_creation_policy = CREATION_POLICY.load(deps.storage)?;
 
     // Check that the sender is permitted to create proposals.
-    if !proposal_creation_policy.is_permitted(&sender) {
+    if !proposal_creation_policy.is_permitted(&info.sender) {
         return Err(ContractError::Unauthorized {});
     }
 
@@ -169,7 +175,7 @@ pub fn execute_propose(
     // pre-propose module, it must be specified. Otherwise, the
     // proposer should not be specified.
     let proposer = match (proposer, &proposal_creation_policy) {
-        (None, ProposalCreationPolicy::Anyone {}) => sender.clone(),
+        (None, ProposalCreationPolicy::Anyone {}) => info.sender.clone(),
         // `is_permitted` above checks that an allowed module is
         // actually sending the propose message.
         (Some(proposer), ProposalCreationPolicy::Module { .. }) => {
@@ -245,17 +251,213 @@ pub fn execute_propose(
 
     PROPOSALS.save(deps.storage, id, &proposal)?;
 
+    // TODO: Check if this requires tweaking
     let hooks = new_proposal_hooks(PROPOSAL_HOOKS, deps.storage, id, proposer.as_str())?;
+
+    // TODO: Get list of members to check signatures against them
+    let members: MemberListResponse = deps.querier.query_wasm_smart(
+        Addr::unchecked("todo_take_cw4_group_address"),
+        &ListMembers {
+            start_after: None, // TODO: CHeck if Some() needed
+            limit: None,       // TODO: CHeck if Some() needed
+        },
+    )?;
+
+    // As we are passing message_hash and signature tuples, we should be able to always recover the correct publicKey.
+    // Given this assumption we should previously check what the majority says leveraging the clear message_hash.
+    let mut message_hash_counts: HashMap<&[u8], u32> = HashMap::new();
+    for vote_signature in vote_signatures {
+        *message_hash_counts
+            .entry(vote_signature.message_hash)
+            .or_insert(0) += 1;
+    }
+
+    // TODO: document this block
+    let message_hash_majority: &[u8] = if let Some(max_count) = message_hash_counts.values().max() {
+        let max_count_hashes: Vec<&[u8]> = message_hash_counts
+            .iter()
+            .filter(|&(_, &count)| count == *max_count)
+            .map(|(&hash, _)| hash)
+            .collect();
+
+        if max_count_hashes.len() > 1 {
+            // Handle the error case where there is a tie
+            return Err(ContractError::InactiveDao {}); // TODO: Create specificerrorType
+        } else {
+            // Return message_hash_majority value
+            max_count_hashes[0]
+        }
+    } else {
+        // Handle the case where there are no votes
+        return Err(ContractError::InactiveDao {}); // TODO: Create specific errorType
+    };
+
+    // TODO: Foreach signature (vote) received
+    for vote_signature in vote_signatures {
+        // TODO: Compute vote using cosmwasm_crypto crate as in the POC, but against this module's state such as members
+        let pubkey_result =
+            secp256k1_recover_pubkey(&vote_signature.message_hash, &vote_signature.signature, 1u8); // TODO: remove hardcoded 1u8
+
+        let mut vote: Option<Vote> = None;
+        match pubkey_result {
+            Ok(pubkey) => {
+                let address = pubkey_to_address(&pubkey);
+
+                if members.members.iter().any(|member| member.addr == address) {
+                    // Members has been found
+                    // TODO: Compute yes or no vote based on majority previous computed.
+                    vote = Some(if vote_signature.message_hash == message_hash_majority {
+                        Vote::Yes
+                    } else {
+                        Vote::No
+                    });
+                } else {
+                    // TODO: Skip this iteration and continue
+                }
+            }
+            Err(_) => {
+                // Handle error, log or push to invalid
+            }
+        }
+
+        // TODO: Rationale (optional). Deprecate this or hardcode it to "".tostring()
+        let rationale = Some("I'm voting because this is cool!".to_string());
+
+        // TODO: Implement proposal_vote()
+        // Call proposal_vote only if vote_option is not None
+        if let Some(vote) = vote {
+            proposal_vote(
+                deps.branch(),
+                env.clone(),
+                info.clone(),
+                id,
+                vote,
+                rationale,
+            )?;
+        }
+    }
+
+    // TODO: Implement proposal_execute()
+    proposal_execute(deps.branch(), env, info.clone(), id)?;
 
     Ok(Response::default()
         .add_submessages(hooks)
         .add_attribute("action", "propose")
-        .add_attribute("sender", sender)
+        .add_attribute("sender", info.sender)
         .add_attribute("proposal_id", id.to_string())
         .add_attribute("status", proposal.status.to_string()))
 }
 
-pub fn execute_execute(
+// TODO: Move this to helpers.rs
+fn pubkey_to_address(pubkey: &[u8]) -> Addr {
+    Addr::unchecked(String::from_utf8_lossy(pubkey).to_string())
+}
+
+// TODO: Move this to proposal.rs::impl block
+fn proposal_vote(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    proposal_id: u64,
+    vote: Vote,
+    rationale: Option<String>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    let mut prop = PROPOSALS
+        .may_load(deps.storage, proposal_id)?
+        .ok_or(ContractError::NoSuchProposal { id: proposal_id })?;
+
+    // Allow voting on proposals until they expire.
+    // Voting on a non-open proposal will never change
+    // their outcome as if an outcome has been determined,
+    // it is because no possible sequence of votes may
+    // cause a different one. This then serves to allow
+    // for better tallies of opinions in the event that a
+    // proposal passes or is rejected early.
+    if prop.expiration.is_expired(&env.block) {
+        return Err(ContractError::Expired { id: proposal_id });
+    }
+
+    // TODO: We should inject the sender instead taking it from info, recovered with message_hash and signature uint8arrays
+    let vote_power = get_voting_power(
+        deps.as_ref(),
+        info.sender.clone(),
+        &config.dao,
+        Some(prop.start_height),
+    )?;
+    if vote_power.is_zero() {
+        return Err(ContractError::NotRegistered {});
+    }
+
+    BALLOTS.update(deps.storage, (proposal_id, &info.sender), |bal| match bal {
+        Some(current_ballot) => {
+            if prop.allow_revoting {
+                if current_ballot.vote == vote {
+                    // Don't allow casting the same vote more than
+                    // once. This seems liable to be confusing
+                    // behavior.
+                    Err(ContractError::AlreadyCast {})
+                } else {
+                    // Remove the old vote if this is a re-vote.
+                    prop.votes
+                        .remove_vote(current_ballot.vote, current_ballot.power);
+                    Ok(Ballot {
+                        power: vote_power,
+                        vote,
+                        // Roll over the previous rationale. If
+                        // you're changing your vote, you've also
+                        // likely changed your thinking.
+                        rationale: rationale.clone(),
+                    })
+                }
+            } else {
+                Err(ContractError::AlreadyVoted {})
+            }
+        }
+        None => Ok(Ballot {
+            power: vote_power,
+            vote,
+            rationale: rationale.clone(),
+        }),
+    })?;
+
+    let old_status = prop.status;
+
+    prop.votes.add_vote(vote, vote_power);
+    prop.update_status(&env.block);
+
+    PROPOSALS.save(deps.storage, proposal_id, &prop)?;
+
+    let new_status = prop.status;
+    let change_hooks = proposal_status_changed_hooks(
+        PROPOSAL_HOOKS,
+        deps.storage,
+        proposal_id,
+        old_status.to_string(),
+        new_status.to_string(),
+    )?;
+
+    let vote_hooks = new_vote_hooks(
+        VOTE_HOOKS,
+        deps.storage,
+        proposal_id,
+        info.sender.to_string(),
+        vote.to_string(),
+    )?;
+
+    Ok(Response::default()
+        .add_submessages(change_hooks)
+        .add_submessages(vote_hooks)
+        .add_attribute("action", "vote")
+        .add_attribute("sender", info.sender)
+        .add_attribute("proposal_id", proposal_id.to_string())
+        .add_attribute("position", vote.to_string())
+        .add_attribute("rationale", rationale.as_deref().unwrap_or("_none"))
+        .add_attribute("status", prop.status.to_string()))
+}
+
+// TODO: Move this to proposal.rs::impl block
+fn proposal_execute(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
@@ -349,107 +551,6 @@ pub fn execute_execute(
         .add_attribute("sender", info.sender)
         .add_attribute("proposal_id", proposal_id.to_string())
         .add_attribute("dao", config.dao))
-}
-
-pub fn execute_vote(
-    deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
-    proposal_id: u64,
-    vote: Vote,
-    rationale: Option<String>,
-) -> Result<Response, ContractError> {
-    let config = CONFIG.load(deps.storage)?;
-    let mut prop = PROPOSALS
-        .may_load(deps.storage, proposal_id)?
-        .ok_or(ContractError::NoSuchProposal { id: proposal_id })?;
-
-    // Allow voting on proposals until they expire.
-    // Voting on a non-open proposal will never change
-    // their outcome as if an outcome has been determined,
-    // it is because no possible sequence of votes may
-    // cause a different one. This then serves to allow
-    // for better tallies of opinions in the event that a
-    // proposal passes or is rejected early.
-    if prop.expiration.is_expired(&env.block) {
-        return Err(ContractError::Expired { id: proposal_id });
-    }
-
-    let vote_power = get_voting_power(
-        deps.as_ref(),
-        info.sender.clone(),
-        &config.dao,
-        Some(prop.start_height),
-    )?;
-    if vote_power.is_zero() {
-        return Err(ContractError::NotRegistered {});
-    }
-
-    BALLOTS.update(deps.storage, (proposal_id, &info.sender), |bal| match bal {
-        Some(current_ballot) => {
-            if prop.allow_revoting {
-                if current_ballot.vote == vote {
-                    // Don't allow casting the same vote more than
-                    // once. This seems liable to be confusing
-                    // behavior.
-                    Err(ContractError::AlreadyCast {})
-                } else {
-                    // Remove the old vote if this is a re-vote.
-                    prop.votes
-                        .remove_vote(current_ballot.vote, current_ballot.power);
-                    Ok(Ballot {
-                        power: vote_power,
-                        vote,
-                        // Roll over the previous rationale. If
-                        // you're changing your vote, you've also
-                        // likely changed your thinking.
-                        rationale: rationale.clone(),
-                    })
-                }
-            } else {
-                Err(ContractError::AlreadyVoted {})
-            }
-        }
-        None => Ok(Ballot {
-            power: vote_power,
-            vote,
-            rationale: rationale.clone(),
-        }),
-    })?;
-
-    let old_status = prop.status;
-
-    prop.votes.add_vote(vote, vote_power);
-    prop.update_status(&env.block);
-
-    PROPOSALS.save(deps.storage, proposal_id, &prop)?;
-
-    let new_status = prop.status;
-    let change_hooks = proposal_status_changed_hooks(
-        PROPOSAL_HOOKS,
-        deps.storage,
-        proposal_id,
-        old_status.to_string(),
-        new_status.to_string(),
-    )?;
-
-    let vote_hooks = new_vote_hooks(
-        VOTE_HOOKS,
-        deps.storage,
-        proposal_id,
-        info.sender.to_string(),
-        vote.to_string(),
-    )?;
-
-    Ok(Response::default()
-        .add_submessages(change_hooks)
-        .add_submessages(vote_hooks)
-        .add_attribute("action", "vote")
-        .add_attribute("sender", info.sender)
-        .add_attribute("proposal_id", proposal_id.to_string())
-        .add_attribute("position", vote.to_string())
-        .add_attribute("rationale", rationale.as_deref().unwrap_or("_none"))
-        .add_attribute("status", prop.status.to_string()))
 }
 
 pub fn execute_update_rationale(
