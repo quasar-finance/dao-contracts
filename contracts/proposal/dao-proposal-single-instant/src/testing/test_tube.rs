@@ -2,19 +2,17 @@
 pub mod test_tube {
     use std::collections::HashMap;
 
-    use cosmwasm_std::{Coin, Uint128};
-    use cw_utils::Duration;
+    use cosmwasm_std::{Binary, Coin};
+    use dao_interface::state::Admin;
+    // use cw_utils::Duration;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
     use dao_interface::state::ModuleInstantiateInfo;
-    use dao_voting::pre_propose::PreProposeInfo;
-    use dao_voting::threshold::Threshold;
+    // use dao_voting::pre_propose::PreProposeInfo;
+    // use dao_voting::threshold::Threshold;
+    use crate::msg::SingleChoiceInstantProposeMsg;
+    use crate::state::VoteSignature;
     use osmosis_test_tube::Account;
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
-
-    use crate::msg::{
-        InstantiateMsg as InstantiateMsgSingleChoiceInstant, SingleChoiceInstantProposeMsg,
-    };
-    use crate::state::VoteSignature;
 
     const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
 
@@ -80,50 +78,57 @@ pub mod test_tube {
         // HashMap to store contract names and their addresses
         let mut contracts: HashMap<&str, &str> = HashMap::new();
 
-        // TODO: START ISNTANTIATION
-        // Voting
-        let dao_voting_contract = wasm
-            .instantiate(
-                *code_ids.get("dao-voting").unwrap(),
-                &todo!(),
-                Some(admin.address().as_str()),
-                Some("dao-voting"),
-                vec![].as_ref(),
-                &admin,
-            )
-            .unwrap();
-        contracts.insert("dao-voting", dao_voting_contract.data.address.as_str());
+        // TODO: START INSTANTIATION
 
+        // TODO: Remove, this instantiation is not needed. As long as the code_id exists after storing it, we will instantiate this during dao-dao-core inst
+        // // Voting
+        // let dao_voting_contract = wasm
+        //     .instantiate(
+        //         *code_ids.get("dao-voting").unwrap(),
+        //         &todo!(),
+        //         Some(admin.address().as_str()),
+        //         Some("dao-voting"),
+        //         vec![].as_ref(),
+        //         &admin,
+        //     )
+        //     .unwrap();
+        // contracts.insert("dao-voting", dao_voting_contract.data.address.as_str());
+
+        // TODO: Remove, this instantiation is not needed. As long as the code_id exists after storing it, we will instantiate this during dao-dao-core inst
         // Proposal
-        let dao_proposal_contract = wasm
-            .instantiate(
-                *code_ids.get("dao-proposal-single-instant").unwrap(),
-                &InstantiateMsgSingleChoiceInstant {
-                    threshold: Threshold::AbsoluteCount {
-                        threshold: Uint128::new(1u128),
-                    },
-                    // TODO: Create an additional test variant as below
-                    // threshold: Threshold::ThresholdQuorum {
-                    //     threshold: PercentageThreshold,
-                    //     quorum: PercentageThreshold,
-                    // },
-                    max_voting_period: Duration::Time(0), // 0 seconds
-                    min_voting_period: None,
-                    only_members_execute: true,
-                    allow_revoting: false,
-                    pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
-                    close_proposal_on_execution_failure: true,
-                },
-                Some(admin.address().as_str()),
-                Some("dao-proposal-single-instant"),
-                vec![].as_ref(),
-                &admin,
-            )
-            .unwrap();
-        contracts.insert(
-            "dao-proposal-single-instant",
-            dao_proposal_contract.data.address.as_str(),
-        );
+        // let dao_proposal_contract = wasm
+        //     .instantiate(
+        //         *code_ids.get("dao-proposal-single-instant").unwrap(),
+        //         &InstantiateMsgSingleChoiceInstant {
+        //             threshold: Threshold::AbsoluteCount {
+        //                 threshold: Uint128::new(1u128),
+        //             },
+        //             // TODO: Create an additional test variant as below
+        //             // threshold: Threshold::ThresholdQuorum {
+        //             //     threshold: PercentageThreshold,
+        //             //     quorum: PercentageThreshold,
+        //             // },
+        //             max_voting_period: Duration::Time(0), // 0 seconds
+        //             min_voting_period: None,
+        //             only_members_execute: true,
+        //             allow_revoting: false,
+        //             pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
+        //             close_proposal_on_execution_failure: true,
+        //         },
+        //         Some(admin.address().as_str()),
+        //         Some("dao-proposal-single-instant"),
+        //         vec![].as_ref(),
+        //         &admin,
+        //     )
+        //     .unwrap();
+        // contracts.insert(
+        //     "dao-proposal-single-instant",
+        //     dao_proposal_contract.data.address.as_str(),
+        // );
+
+        // TODO: Create msgs as defined here -> https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
+        let dao_voting_instantiate_msg = todo!();
+        let dao_proposal_instantiate_msg = todo!();
 
         // Core
         let dao_dao_core = wasm
@@ -138,15 +143,19 @@ pub mod test_tube {
                     automatically_add_cw721s: true,
                     voting_module_instantiate_info: ModuleInstantiateInfo {
                         code_id: *code_ids.get("dao-voting").unwrap(),
-                        msg: todo!(),
-                        admin: Some(admin.address()),
+                        msg: Binary::from(dao_voting_instantiate_msg),
+                        admin: Some(Admin::Address {
+                            addr: admin.address(),
+                        }),
                         funds: vec![],
                         label: "dao-voting".to_string(),
                     },
                     proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
-                        code_id: *code_ids.get("dao-voting").unwrap(),
-                        msg: todo!(),
-                        admin: Some(admin.address()),
+                        code_id: *code_ids.get("dao-proposal-single-instant").unwrap(),
+                        msg: Binary::from(dao_proposal_instantiate_msg),
+                        admin: Some(Admin::Address {
+                            addr: admin.address(),
+                        }),
                         funds: vec![],
                         label: "dao-proposal-single-instant".to_string(),
                     }],
