@@ -42,6 +42,8 @@ pub mod test_tube {
             )
         }
 
+        // TODO: Check if more contracts are required to be isntantiated to have a minimal working environment for our purpose
+
         // Contracts to store and instantiate
         let contracts_setup: Vec<(&str, &str)> = vec![
             (
@@ -133,15 +135,19 @@ pub mod test_tube {
         //   "cw4_group_code_id": 434,
         //   "initial_members": [
         //     {
-        //       "addr": "juno1jwxjzpwdtglf7a35sackv0dn0hr9nk6h6ctsh4",
+        //       "addr": "osmo1account0admin", <- this should be constructed dynamically based on ^ test configs
+        //       "weight": 0 <- notice admin with 0 voting power, but it needs to be a members to be able to propose
+        //     },
+        //     {
+        //       "addr": "osmo1account1", <- this should be constructed dynamically based on ^ test configs
         //       "weight": 1
         //     },
         //     {
-        //       "addr": "juno1eck27qefttt5twxsg38gsr0q0hr4e3vvyxm2q4",
+        //       "addr": "osmo1account2", <- this should be constructed dynamically based on ^ test configs
         //       "weight": 1
         //     },
         //     {
-        //       "addr": "juno1njyvry0t3j5dy4rr6ar5zfglg3cy2e8u745hl7",
+        //       "addr": "osmo1account3", <- this should be constructed dynamically based on ^ test configs
         //       "weight": 1
         //     },
         //   ]

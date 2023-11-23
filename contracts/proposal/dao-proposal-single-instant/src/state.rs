@@ -11,9 +11,9 @@ use crate::proposal::SingleChoiceProposal;
 #[cw_serde]
 pub struct VoteSignature {
     /// Message hash
-    pub message_hash: &[u8], // TODO: Check lifetime
+    pub message_hash: Vec<u8>, // TODO: Check lifetime
     /// Signature of message hash
-    pub signature: &[u8], // TODO: Check lifetime
+    pub signature: Vec<u8>, // TODO: Check lifetime
 }
 
 /// A vote cast for a proposal.

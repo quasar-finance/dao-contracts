@@ -171,6 +171,11 @@ pub fn execute_propose(
         return Err(ContractError::Unauthorized {});
     }
 
+    // TODO: We need a permissioned proposer, probably the admin of the ProposalModule
+    // so we can avoid Verifiers to be hitting the entrypoint skipping our API
+    // This could be a security issue if we use Threshold::AbsoluteCount { threshold: 1 } as config param
+    // Also pre_propose modules and hooks would be relevant in this context
+
     // Determine the appropriate proposer. If this is coming from our
     // pre-propose module, it must be specified. Otherwise, the
     // proposer should not be specified.
@@ -268,7 +273,7 @@ pub fn execute_propose(
     let mut message_hash_counts: HashMap<&[u8], u32> = HashMap::new();
     for vote_signature in vote_signatures {
         *message_hash_counts
-            .entry(vote_signature.message_hash)
+            .entry(vote_signature.message_hash.as_ref())
             .or_insert(0) += 1;
     }
 
