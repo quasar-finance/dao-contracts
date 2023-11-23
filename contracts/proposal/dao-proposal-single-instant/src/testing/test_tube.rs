@@ -127,7 +127,39 @@ pub mod test_tube {
         // );
 
         // TODO: Create msgs as defined here -> https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
+        // We should use structs and serde to serialize it to json, and then to base64
+
+        // {
+        //   "cw4_group_code_id": 434,
+        //   "initial_members": [
+        //     {
+        //       "addr": "juno1jwxjzpwdtglf7a35sackv0dn0hr9nk6h6ctsh4",
+        //       "weight": 1
+        //     },
+        //     {
+        //       "addr": "juno1eck27qefttt5twxsg38gsr0q0hr4e3vvyxm2q4",
+        //       "weight": 1
+        //     },
+        //     {
+        //       "addr": "juno1njyvry0t3j5dy4rr6ar5zfglg3cy2e8u745hl7",
+        //       "weight": 1
+        //     },
+        //   ]
+        // }
         let dao_voting_instantiate_msg = todo!();
+
+        // {
+        //   "allow_revoting":true,
+        //   "max_voting_period":{
+        //     "time":432000
+        //   },
+        //   "only_members_execute":true,
+        //   "threshold":{
+        //     "absolute_count":{
+        //       "threshold":"6"
+        //     }
+        //   }
+        // }
         let dao_proposal_instantiate_msg = todo!();
 
         // Core
