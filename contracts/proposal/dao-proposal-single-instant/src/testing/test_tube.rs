@@ -1,13 +1,18 @@
 #[cfg(test)]
 pub mod test_tube {
+    use std::any;
     use std::collections::HashMap;
 
     use cosmwasm_std::Coin;
+    use dao_interface::msg::ExecuteMsg::UpdateProposalModules;
+    use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
+    use dao_interface::state::ModuleInstantiateInfo;
     use osmosis_test_tube::Account;
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
 
-    use crate::msg::InstantiateMsg;
-    use crate::msg::SingleChoiceInstantProposeMsg;
+    use crate::msg::{
+        InstantiateMsg as InstantiateMsgSingleChoiceInstant, SingleChoiceInstantProposeMsg,
+    };
     use crate::state::VoteSignature;
     // use cosmrs::bip32::secp256k1::ecdsa::signature::
     const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
@@ -38,43 +43,46 @@ pub mod test_tube {
             )
         }
 
+        // Define an enum to handle different InstantiateMsg types
+        enum InstantiateMsgVariant {
+            Core(InstantiateMsgCore),
+            SingleChoiceInstant(InstantiateMsgSingleChoiceInstant),
+        }
         // Contracts to store and instantiate
-        let init_msg1 = InstantiateMsg {
-            threshold: (),
-            max_voting_period: (),
-            min_voting_period: (),
-            only_members_execute: (),
-            allow_revoting: (),
-            pre_propose_info: (),
-            close_proposal_on_execution_failure: (),
-        };
-        let init_msg2 = InstantiateMsg {
-            threshold: (),
-            max_voting_period: (),
-            min_voting_period: (),
-            only_members_execute: (),
-            allow_revoting: (),
-            pre_propose_info: (),
-            close_proposal_on_execution_failure: (),
-        };
-
-        let contracts_setup: Vec<(&str, &str, InstantiateMsg)> = vec![
+        let contracts_setup: Vec<(&str, &str, InstantiateMsgVariant)> = vec![
             (
                 "dao-dao-core",
                 "./test-tube-build/wasm32-unknown-unknown/release/dao_dao_core.wasm",
-                init_msg1,
+                InstantiateMsgVariant::Core(InstantiateMsgCore {
+                    admin: todo!(),
+                    name: todo!(),
+                    description: todo!(),
+                    image_url: todo!(),
+                    automatically_add_cw20s: todo!(),
+                    automatically_add_cw721s: todo!(),
+                    voting_module_instantiate_info: todo!(),
+                    proposal_modules_instantiate_info: todo!(),
+                    initial_items: todo!(),
+                    dao_uri: todo!(),
+                }),
             ),
             (
                 "dao-proposal-single-instant",
                 "./test-tube-build/wasm32-unknown-unknown/release/dao_proposal_single_instant.wasm",
-                init_msg2,
+                InstantiateMsgVariant::SingleChoiceInstant(InstantiateMsgSingleChoiceInstant {
+                    threshold: todo!(),
+                    max_voting_period: todo!(),
+                    min_voting_period: todo!(),
+                    only_members_execute: todo!(),
+                    allow_revoting: todo!(),
+                    pre_propose_info: todo!(),
+                    close_proposal_on_execution_failure: todo!(),
+                }),
             ),
         ];
 
-        // [START] - (relevant: testing::instantiate::instantiate_with_cw4_groups_governance() unit test)
-
         // Store contracts and declare an array of tuples
-        let code_ids: Vec<(&str, u64, InstantiateMsg)> = contracts_setup
+        let code_ids: Vec<(&str, u64, InstantiateMsgVariant)> = contracts_setup
             .iter()
             .map(|&(contract_name, file_name, inst_msg)| {
                 let wasm_byte_code = std::fs::read(file_name)
@@ -95,34 +103,59 @@ pub mod test_tube {
 
         // Final iteration to instantiate contracts and populate the HashMap
         for contract in code_ids {
-            let instantiated_contract = wasm
-                .instantiate(
+            let instantiated_contract = match contract.2 {
+                InstantiateMsgVariant::Core(msg) => wasm.instantiate(
                     contract.1,
-                    &contract.2,
+                    &msg,
                     Some(admin.address().as_str()),
                     Some(contract.0),
                     vec![].as_ref(),
                     &admin,
-                )
-                .expect("Failed to instantiate contract");
+                ),
+                InstantiateMsgVariant::SingleChoiceInstant(msg) => wasm.instantiate(
+                    contract.1,
+                    &msg,
+                    Some(admin.address().as_str()),
+                    Some(contract.0),
+                    vec![].as_ref(),
+                    &admin,
+                ),
+            }
+            .expect("Failed to instantiate contract");
 
-                contracts.insert(
-                contract.0,
-                instantiated_contract.data.address.as_str(),
-            );
+            contracts.insert(contract.0, instantiated_contract.data.address.as_str());
         }
+
+        // TODO: Add Proposal Module to DAO core contract
+        let update_proposal_modules_resp = wasm
+            .execute(
+                contracts.get("dao-dao-core").unwrap(),
+                &UpdateProposalModules {
+                    to_add: vec![ModuleInstantiateInfo {
+                        code_id: todo!(),
+                        msg: todo!(),
+                        admin: todo!(),
+                        funds: todo!(),
+                        label: todo!(),
+                    }],
+                    to_disable: vec![],
+                },
+                &vec![],
+                &admin,
+            )
+            .unwrap();
+        // TODO: Assert response
+        println!(
+            "update_proposal_modules_resp: {:?}",
+            update_proposal_modules_resp
+        );
 
         // TODO: Ensure memberships are created as specified
         // For example:
         // - Proposers: admin, weight 0
         // - Voters: voters foreach, weight 1
 
-        (
-            app,
-            contracts,
-            admin,
-            voters,
-        )
+        (app, contracts, admin, voters)
     }
 
     #[test]
