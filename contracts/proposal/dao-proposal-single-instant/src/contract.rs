@@ -1,4 +1,3 @@
-use cosmwasm_crypto::secp256k1_recover_pubkey;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
@@ -23,6 +22,8 @@ use dao_voting::reply::{
 use dao_voting::status::Status;
 use dao_voting::threshold::{Threshold, ThresholdError};
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
+use secp256k1::{Message, Secp256k1};
+use secp256k1::ecdsa::{RecoveryId, RecoverableSignature};
 use std::collections::HashMap;
 
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
@@ -255,19 +256,17 @@ pub fn execute_propose(
     let members: MemberListResponse = deps.querier.query_wasm_smart(
         Addr::unchecked("todo_take_cw4_group_address"),
         &ListMembers {
-            start_after: None, // TODO: CHeck if Some() needed
-            limit: None,       // TODO: CHeck if Some() needed
+            start_after: None, // TODO: Check if Some() needed
+            limit: None,       // TODO: Check if Some() needed
         },
     )?;
 
     // As we are passing message_hash and signature tuples, we should be able to always recover the correct publicKey.
     // Given this assumption we should previously check what the majority says leveraging the clear message_hash.
-    // let mut message_hash_counts: HashMap<&[u8], u32> = HashMap::new();
     let mut message_hash_counts: HashMap<Vec<u8>, u32> = HashMap::new();
 
     for vote_signature in &vote_signatures {
         *message_hash_counts
-            // .entry(vote_signature.message_hash.as_ref())
             .entry(vote_signature.message_hash.clone())
             .or_insert(0) += 1;
     }
@@ -297,16 +296,18 @@ pub fn execute_propose(
         ));
     };
 
-    // TODO: Foreach signature (vote) received
+    // Foreach signature (vote) received, compute vote and vote on proposal
     for vote_signature in &vote_signatures {
-        // TODO: Compute vote using cosmwasm_crypto crate as in the POC, but against this module's state such as members
-        let pubkey_result =
-            secp256k1_recover_pubkey(&vote_signature.message_hash, &vote_signature.signature, 1u8); // TODO: remove hardcoded 1u8
+        let message = Message::from_digest_slice(&vote_signature.message_hash).expect("32 bytes");
+        let recovery_id = RecoveryId::from_i32(1).expect("Valid recovery id"); // TODO: Replace with actual recovery ID
+        let signature = RecoverableSignature::from_compact(&vote_signature.signature, recovery_id).expect("64 bytes");
+    
+        let pubkey_result = Secp256k1::new().recover_ecdsa(&message, &signature);
 
         let mut vote: Option<Vote> = None;
         match pubkey_result {
             Ok(pubkey) => {
-                let address = pubkey_to_address(&pubkey);
+                let address = pubkey_to_address(&pubkey.serialize());
 
                 if members.members.iter().any(|member| member.addr == address) {
                     // Members has been found
@@ -325,10 +326,9 @@ pub fn execute_propose(
             }
         }
 
-        // TODO: Rationale (optional). Deprecate this or hardcode it to "".tostring()
+        // Rationale (optional). TODO: Deprecate this or hardcode it to "".tostring()
         let rationale = Some("I'm voting because this is cool!".to_string());
 
-        // TODO: Implement proposal_vote()
         // Call proposal_vote only if vote_option is not None
         if let Some(vote) = vote {
             proposal_vote(

@@ -226,6 +226,7 @@ pub mod test_tube {
                 signature: voter.signing_key().sign(msg).unwrap().as_ref().to_vec(),
             })
         }
+        println!("vote_signatures: {:?}", vote_signatures);
 
         // TODO: Do Admin send from admin to treasury
         // TODO: Get Admin balance before
