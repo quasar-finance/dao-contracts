@@ -3,7 +3,7 @@ pub mod test_tube {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use crate::msg::{InstantiateMsg, SingleChoiceInstantProposeMsg};
+    use crate::msg::{InstantiateMsg, SingleChoiceInstantProposeMsg, ExecuteMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::{to_binary, Coin, Uint128};
     use cw_utils::Duration;
@@ -80,13 +80,11 @@ pub mod test_tube {
         let code_ids: HashMap<&str, u64> = contracts_setup
             .iter()
             .map(|&(contract_name, ref wasm_byte_code)| {
-                println!("DEBUG 1.1: {}", contract_name);
                 let code_id = wasm
                     .store_code(&wasm_byte_code, None, &admin)
                     .expect("Failed to store code")
                     .data
                     .code_id;
-                println!("DEBUG 1.2");
 
                 (contract_name, code_id)
             })
@@ -133,7 +131,7 @@ pub mod test_tube {
                             min_voting_period: None,
                             only_members_execute: true,
                             allow_revoting: false,
-                            pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
+                            pre_propose_info: PreProposeInfo::AnyoneMayPropose {}, // TODO
                             close_proposal_on_execution_failure: true,
                         })
                         .unwrap(),
@@ -226,7 +224,6 @@ pub mod test_tube {
                 signature: voter.signing_key().sign(msg).unwrap().as_ref().to_vec(),
             })
         }
-        println!("vote_signatures: {:?}", vote_signatures);
 
         // TODO: Do Admin send from admin to treasury
         // TODO: Get Admin balance before
@@ -237,13 +234,13 @@ pub mod test_tube {
         let execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
-                &SingleChoiceInstantProposeMsg {
+                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
                     msgs: vec![], // TODO: Mock a simple bank transfer that in prod will be the trigger exec to the middleware contract
-                    proposer: Some(admin.address()),
+                    proposer: None, // TODO: Some(admin.address()) is causing "pre-propose modules must specify a proposer. lacking one, no proposer should be specified: execute wasm contract failed"
                     votes: vec![],
-                },
+                }),
                 &vec![],
                 &admin,
             )

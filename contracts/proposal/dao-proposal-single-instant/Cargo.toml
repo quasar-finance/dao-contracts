@@ -20,7 +20,6 @@ library = []
 cosmwasm-std = { workspace = true, features = ["ibc3"] }
 cosmwasm-storage = { workspace = true }
 cosmwasm-schema = { workspace = true }
-secp256k1 = { version = "0.28.0", features=["recovery"]} # added for single-instant
 cw-storage-plus = { workspace = true }
 cw-utils = { workspace = true }
 cw2 = { workspace = true }
@@ -29,6 +28,9 @@ cw3 = { workspace = true }
 cw4 = { workspace = true }
 cw4-group = { workspace = true }
 thiserror = { workspace = true }
+
+#k256 = { version = "0.13.2", features = ["ecdsa"] } # added for single-instant
+#digest = "0.10.7" # added for single-instant
 
 dao-dao-macros = { workspace = true }
 dao-pre-propose-base = { workspace = true }

@@ -2,9 +2,7 @@ use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{CosmosMsg, Empty};
 use cw_utils::Duration;
 use dao_dao_macros::proposal_module_query;
-use dao_voting::{
-    pre_propose::PreProposeInfo, threshold::Threshold,
-};
+use dao_voting::{pre_propose::PreProposeInfo, threshold::Threshold};
 
 use crate::state::VoteSignature;
 

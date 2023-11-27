@@ -22,8 +22,6 @@ use dao_voting::reply::{
 use dao_voting::status::Status;
 use dao_voting::threshold::{Threshold, ThresholdError};
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
-use secp256k1::{Message, Secp256k1};
-use secp256k1::ecdsa::{RecoveryId, RecoverableSignature};
 use std::collections::HashMap;
 
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
@@ -298,16 +296,16 @@ pub fn execute_propose(
 
     // Foreach signature (vote) received, compute vote and vote on proposal
     for vote_signature in &vote_signatures {
-        let message = Message::from_digest_slice(&vote_signature.message_hash).expect("32 bytes");
-        let recovery_id = RecoveryId::from_i32(1).expect("Valid recovery id"); // TODO: Replace with actual recovery ID
-        let signature = RecoverableSignature::from_compact(&vote_signature.signature, recovery_id).expect("64 bytes");
-    
-        let pubkey_result = Secp256k1::new().recover_ecdsa(&message, &signature);
+        let pubkey_result = deps.api.secp256k1_recover_pubkey(
+            &vote_signature.message_hash,
+            &vote_signature.signature,
+            1u8,
+        );
 
         let mut vote: Option<Vote> = None;
         match pubkey_result {
             Ok(pubkey) => {
-                let address = pubkey_to_address(&pubkey.serialize());
+                let address = pubkey_to_address(&pubkey);
 
                 if members.members.iter().any(|member| member.addr == address) {
                     // Members has been found
