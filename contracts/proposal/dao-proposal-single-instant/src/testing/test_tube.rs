@@ -44,26 +44,30 @@ pub mod test_tube {
             )
         }
 
-        // TODO: Check if more contracts are required to be isntantiated to have a minimal working environment for our purpose
+        // Create a vector of cw4::Member
+        let initial_members = voters
+            .iter()
+            .map(|voter| cw4::Member {
+                addr: voter.address().to_string(),
+                weight: 1,
+            })
+            .collect::<Vec<_>>();
+        // TODO: Consider admin should be included ^ as member, but with voting power (weight) 0
 
         // Contracts to store and instantiate
         let contracts_setup: Vec<(&str, Vec<u8>)> = vec![
-            // ./packages/dao-voting
             (
-                "dao_voting",
-                get_wasm_byte_code("dao_voting_cw4"), // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
+                "cw4_group",
+                get_wasm_byte_code("cw4_group"), // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
             ),
-            // ./contracts/voting/dao-voting-cw4
             (
                 "dao_voting_cw4",
                 get_wasm_byte_code("dao_voting_cw4"), // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
             ),
-            // ./contracts/proposal/dao-proposal-single-instant
             (
                 "dao_proposal_single_instant",
                 get_wasm_byte_code("dao_proposal_single_instant"),
             ),
-            // ./contracts/dao-dao-core
             ("dao_dao_core", get_wasm_byte_code("dao_dao_core")),
         ];
 
@@ -86,14 +90,6 @@ pub mod test_tube {
 
         // TODO: Create msgs as defined here -> https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
         // We should use structs and serde to serialize it to json, and then to base64
-
-        let initial_members = voters
-            .iter()
-            .map(|voter| cw4::Member {
-                addr: voter.address().to_string(),
-                weight: 1,
-            })
-            .collect::<Vec<_>>();
 
         // Core
         let dao_dao_core_instantiate_resp = wasm
