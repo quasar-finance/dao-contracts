@@ -20,7 +20,7 @@ library = []
 cosmwasm-std = { workspace = true, features = ["ibc3"] }
 cosmwasm-storage = { workspace = true }
 cosmwasm-schema = { workspace = true }
-cosmwasm-crypto = "1.5.0" # added for single-instant
+cosmwasm-crypto = { version = "1.5.0", default-features = false} # added for single-instant
 cw-storage-plus = { workspace = true }
 cw-utils = { workspace = true }
 cw2 = { workspace = true }

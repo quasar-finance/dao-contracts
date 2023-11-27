@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use cosmwasm_crypto::secp256k1_recover_pubkey;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -25,6 +23,7 @@ use dao_voting::reply::{
 use dao_voting::status::Status;
 use dao_voting::threshold::{Threshold, ThresholdError};
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
+use std::collections::HashMap;
 
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
 use crate::proposal::{next_proposal_id, SingleChoiceProposal};
