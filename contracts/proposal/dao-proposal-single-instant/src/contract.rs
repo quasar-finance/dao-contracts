@@ -42,7 +42,7 @@ use crate::{
     state::{Ballot, BALLOTS, CONFIG, PROPOSALS, PROPOSAL_COUNT, PROPOSAL_HOOKS, VOTE_HOOKS},
 };
 
-pub(crate) const CONTRACT_NAME: &str = "crates.io:dao-proposal-singlet";
+pub(crate) const CONTRACT_NAME: &str = "crates.io:dao-proposal-single-instant";
 pub(crate) const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Message type used for firing hooks to this module's pre-propose
