@@ -7,7 +7,6 @@ use cosmwasm_std::{
     to_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order, Reply,
     Response, StdResult, Storage, SubMsg, WasmMsg,
 };
-
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
 use cw4::MemberListResponse;
 use cw4_group::msg::QueryMsg::ListMembers;
@@ -25,6 +24,7 @@ use dao_voting::reply::{
 };
 use dao_voting::status::Status;
 use dao_voting::threshold::Threshold;
+use dao_voting::threshold::ThresholdError;
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
 
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
@@ -107,16 +107,10 @@ pub fn execute(
             proposer,
             votes,
         }) => execute_propose(deps, env, info, title, description, msgs, proposer, votes),
-        // ExecuteMsg::Vote {
-        //     proposal_id,
-        //     vote,
-        //     rationale,
-        // } => execute_vote(deps, env, info, proposal_id, vote, rationale),
         ExecuteMsg::UpdateRationale {
             proposal_id,
             rationale,
         } => execute_update_rationale(deps, info, proposal_id, rationale),
-        //ExecuteMsg::Execute { proposal_id } => execute_execute(deps, env, info, proposal_id),
         ExecuteMsg::Close { proposal_id } => execute_close(deps, env, info, proposal_id),
         ExecuteMsg::UpdateConfig {
             threshold,
@@ -270,35 +264,43 @@ pub fn execute_propose(
 
     // As we are passing message_hash and signature tuples, we should be able to always recover the correct publicKey.
     // Given this assumption we should previously check what the majority says leveraging the clear message_hash.
-    let mut message_hash_counts: HashMap<&[u8], u32> = HashMap::new();
-    for vote_signature in vote_signatures {
+    // let mut message_hash_counts: HashMap<&[u8], u32> = HashMap::new();
+    let mut message_hash_counts: HashMap<Vec<u8>, u32> = HashMap::new();
+
+    for vote_signature in &vote_signatures {
         *message_hash_counts
-            .entry(vote_signature.message_hash.as_ref())
+            // .entry(vote_signature.message_hash.as_ref())
+            .entry(vote_signature.message_hash.clone())
             .or_insert(0) += 1;
     }
 
-    // TODO: document this block
-    let message_hash_majority: &[u8] = if let Some(max_count) = message_hash_counts.values().max() {
-        let max_count_hashes: Vec<&[u8]> = message_hash_counts
+    // Get majority message count and throw error if we have a tie
+    let message_hash_majority: Vec<u8> = if let Some(max_count) = message_hash_counts.values().max()
+    {
+        let max_count_hashes: Vec<Vec<u8>> = message_hash_counts
             .iter()
             .filter(|&(_, &count)| count == *max_count)
-            .map(|(&hash, _)| hash)
+            .map(|(hash, _)| hash.clone()) // Clone the Vec<u8> here
             .collect();
 
         if max_count_hashes.len() > 1 {
             // Handle the error case where there is a tie
-            return Err(ContractError::InactiveDao {}); // TODO: Create specificerrorType
+            return Err(ContractError::ThresholdError(
+                ThresholdError::UnreachableThreshold {},
+            ));
         } else {
             // Return message_hash_majority value
-            max_count_hashes[0]
+            max_count_hashes.into_iter().next().unwrap_or_default()
         }
     } else {
         // Handle the case where there are no votes
-        return Err(ContractError::InactiveDao {}); // TODO: Create specific errorType
+        return Err(ContractError::ThresholdError(
+            ThresholdError::UnreachableThreshold {},
+        ));
     };
 
     // TODO: Foreach signature (vote) received
-    for vote_signature in vote_signatures {
+    for vote_signature in &vote_signatures {
         // TODO: Compute vote using cosmwasm_crypto crate as in the POC, but against this module's state such as members
         let pubkey_result =
             secp256k1_recover_pubkey(&vote_signature.message_hash, &vote_signature.signature, 1u8); // TODO: remove hardcoded 1u8

@@ -1,15 +1,17 @@
 #[cfg(test)]
 pub mod test_tube {
     use std::collections::HashMap;
+    use std::path::PathBuf;
 
-    use cosmwasm_std::{Binary, Coin};
+    use cosmwasm_std::{Coin, to_binary, Uint128};
+    use cw_utils::Duration;
     use dao_interface::state::Admin;
-    // use cw_utils::Duration;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
     use dao_interface::state::ModuleInstantiateInfo;
-    // use dao_voting::pre_propose::PreProposeInfo;
-    // use dao_voting::threshold::Threshold;
-    use crate::msg::SingleChoiceInstantProposeMsg;
+    use dao_voting::pre_propose::PreProposeInfo;
+    use dao_voting::threshold::Threshold;
+    use dao_voting_cw4::msg::GroupContract;
+    use crate::msg::{SingleChoiceInstantProposeMsg, InstantiateMsg};
     use crate::state::VoteSignature;
     use osmosis_test_tube::Account;
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
@@ -45,28 +47,33 @@ pub mod test_tube {
         // TODO: Check if more contracts are required to be isntantiated to have a minimal working environment for our purpose
 
         // Contracts to store and instantiate
-        let contracts_setup: Vec<(&str, &str)> = vec![
+        let contracts_setup: Vec<(&str, Vec<u8>)> = vec![
+            // ./packages/dao-voting
             (
-                "dao-voting",
-                "./test-tube-build/wasm32-unknown-unknown/release/dao_voting.wasm", // TODO
+                "dao_voting",
+                get_wasm_byte_code("dao_voting_cw4") // TODO: Check
             ),
+            // ./contracts/voting/dao-voting-cw4
             (
-                "dao-proposal-single-instant",
-                "./test-tube-build/wasm32-unknown-unknown/release/dao_proposal_single_instant.wasm", // TODO
+                "dao_voting_cw4",
+                get_wasm_byte_code("dao_voting_cw4")
             ),
+            // ./contracts/proposal/dao-proposal-single-instant
             (
-                "dao-dao-core",
-                "./test-tube-build/wasm32-unknown-unknown/release/dao_dao_core.wasm", // TODO
+                "dao_proposal_single_instant",
+                get_wasm_byte_code("dao_proposal_single_instant")
+            ),
+            // ./contracts/dao-dao-core
+            (
+                "dao_dao_core",
+                get_wasm_byte_code("dao_dao_core")
             ),
         ];
 
         // Store contracts and declare a HashMap
         let code_ids: HashMap<&str, u64> = contracts_setup
             .iter()
-            .map(|&(contract_name, file_name)| {
-                let wasm_byte_code = std::fs::read(file_name)
-                    .expect(format!("Failed to read file: {}", file_name).as_str());
-
+            .map(|&(contract_name, ref wasm_byte_code)| {
                 let code_id = wasm
                     .store_code(&wasm_byte_code, None, &admin)
                     .expect("Failed to store code")
@@ -80,98 +87,18 @@ pub mod test_tube {
         // HashMap to store contract names and their addresses
         let mut contracts: HashMap<&str, &str> = HashMap::new();
 
-        // TODO: START INSTANTIATION
-
-        // TODO: Remove, this instantiation is not needed. As long as the code_id exists after storing it, we will instantiate this during dao-dao-core inst
-        // // Voting
-        // let dao_voting_contract = wasm
-        //     .instantiate(
-        //         *code_ids.get("dao-voting").unwrap(),
-        //         &todo!(),
-        //         Some(admin.address().as_str()),
-        //         Some("dao-voting"),
-        //         vec![].as_ref(),
-        //         &admin,
-        //     )
-        //     .unwrap();
-        // contracts.insert("dao-voting", dao_voting_contract.data.address.as_str());
-
-        // TODO: Remove, this instantiation is not needed. As long as the code_id exists after storing it, we will instantiate this during dao-dao-core inst
-        // Proposal
-        // let dao_proposal_contract = wasm
-        //     .instantiate(
-        //         *code_ids.get("dao-proposal-single-instant").unwrap(),
-        //         &InstantiateMsgSingleChoiceInstant {
-        //             threshold: Threshold::AbsoluteCount {
-        //                 threshold: Uint128::new(1u128),
-        //             },
-        //             // TODO: Create an additional test variant as below
-        //             // threshold: Threshold::ThresholdQuorum {
-        //             //     threshold: PercentageThreshold,
-        //             //     quorum: PercentageThreshold,
-        //             // },
-        //             max_voting_period: Duration::Time(0), // 0 seconds
-        //             min_voting_period: None,
-        //             only_members_execute: true,
-        //             allow_revoting: false,
-        //             pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
-        //             close_proposal_on_execution_failure: true,
-        //         },
-        //         Some(admin.address().as_str()),
-        //         Some("dao-proposal-single-instant"),
-        //         vec![].as_ref(),
-        //         &admin,
-        //     )
-        //     .unwrap();
-        // contracts.insert(
-        //     "dao-proposal-single-instant",
-        //     dao_proposal_contract.data.address.as_str(),
-        // );
-
         // TODO: Create msgs as defined here -> https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
         // We should use structs and serde to serialize it to json, and then to base64
 
-        // {
-        //   "cw4_group_code_id": 434,
-        //   "initial_members": [
-        //     {
-        //       "addr": "osmo1account0admin", <- this should be constructed dynamically based on ^ test configs
-        //       "weight": 0 <- notice admin with 0 voting power, but it needs to be a members to be able to propose
-        //     },
-        //     {
-        //       "addr": "osmo1account1", <- this should be constructed dynamically based on ^ test configs
-        //       "weight": 1
-        //     },
-        //     {
-        //       "addr": "osmo1account2", <- this should be constructed dynamically based on ^ test configs
-        //       "weight": 1
-        //     },
-        //     {
-        //       "addr": "osmo1account3", <- this should be constructed dynamically based on ^ test configs
-        //       "weight": 1
-        //     },
-        //   ]
-        // }
-        let dao_voting_instantiate_msg = todo!();
-
-        // {
-        //   "allow_revoting":true,
-        //   "max_voting_period":{
-        //     "time":432000
-        //   },
-        //   "only_members_execute":true,
-        //   "threshold":{
-        //     "absolute_count":{
-        //       "threshold":"6"
-        //     }
-        //   }
-        // }
-        let dao_proposal_instantiate_msg = todo!();
+        let initial_members = voters.iter().map(|voter| cw4::Member {
+            addr: voter.address().to_string(),
+            weight: 1,
+        }).collect::<Vec<_>>();
 
         // Core
-        let dao_dao_core = wasm
+        let dao_dao_core_instantiate_resp = wasm
             .instantiate(
-                *code_ids.get("dao-dao-core").unwrap(),
+                *code_ids.get("dao_dao_core").unwrap(),
                 &InstantiateMsgCore {
                     admin: Some(admin.address()),
                     name: "DAO DAO Core".to_string(),
@@ -180,42 +107,79 @@ pub mod test_tube {
                     automatically_add_cw20s: true,
                     automatically_add_cw721s: true,
                     voting_module_instantiate_info: ModuleInstantiateInfo {
-                        code_id: *code_ids.get("dao-voting").unwrap(),
-                        msg: Binary::from(dao_voting_instantiate_msg),
-                        admin: Some(Admin::Address {
-                            addr: admin.address(),
-                        }),
+                        code_id: *code_ids.get("dao_voting").unwrap(),
+                        msg: to_binary(&dao_voting_cw4::msg::InstantiateMsg {
+                            group_contract: GroupContract::New {
+                                cw4_group_code_id: *code_ids.get("dao_voting_cw4").unwrap(),
+                                initial_members,
+                            },
+                        })
+                        .unwrap(),
+                        admin: Some(Admin::CoreModule {}),
                         funds: vec![],
-                        label: "dao-voting".to_string(),
+                        label: "DAO DAO voting module".to_string(),
                     },
                     proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
-                        code_id: *code_ids.get("dao-proposal-single-instant").unwrap(),
-                        msg: Binary::from(dao_proposal_instantiate_msg),
-                        admin: Some(Admin::Address {
-                            addr: admin.address(),
-                        }),
+                        code_id: *code_ids.get("dao_proposal_single_instant").unwrap(),
+                        msg: to_binary(&InstantiateMsg {
+                            threshold: Threshold::AbsoluteCount {
+                                threshold: Uint128::new(1u128),
+                            },
+                            // TODO: Create an additional test variant as below
+                            // threshold: Threshold::ThresholdQuorum {
+                            //     threshold: PercentageThreshold,
+                            //     quorum: PercentageThreshold,
+                            // },
+                            max_voting_period: Duration::Time(0), // 0 seconds
+                            min_voting_period: None,
+                            only_members_execute: true,
+                            allow_revoting: false,
+                            pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
+                            close_proposal_on_execution_failure: true,
+                        }).unwrap(),
+                        admin: Some(Admin::CoreModule {}),
                         funds: vec![],
-                        label: "dao-proposal-single-instant".to_string(),
+                        label: "DAO DAO governance module".to_string(),
                     }],
                     initial_items: None,
                     dao_uri: None,
                 },
                 Some(admin.address().as_str()),
-                Some("dao-dao-core"),
+                Some("dao_dao_core"),
                 vec![].as_ref(),
                 &admin,
             )
             .unwrap();
-        contracts.insert("dao-dao-core", dao_dao_core.data.address.as_str());
 
-        // TODO: END INSTANTIATION
-
-        // TODO: Ensure memberships are created as specified
-        // For example:
-        // - Proposers: admin, weight 0
-        // - Voters: voters foreach, weight 1
+        // contracts.insert("dao_dao_core", dao_dao_core.data.address.as_str());
+        println!("dao_dao_core_instantiate_resp: {:?}", dao_dao_core_instantiate_resp);
 
         (app, contracts, admin, voters)
+    }
+
+    fn get_wasm_byte_code(filename: &str) -> Vec<u8> {
+        let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let byte_code = std::fs::read(
+            manifest_path
+                .join("..")
+                .join("..")
+                .join("..")
+                .join("artifacts")
+                .join(format!("{}-aarch64.wasm", filename)),
+        );
+        match byte_code {
+            Ok(byte_code) => byte_code,
+            // On arm processors, the above path is not found, so we try the following path
+            Err(_) => std::fs::read(
+                manifest_path
+                    .join("..")
+                    .join("..")
+                    .join("..")
+                    .join("artifacts")
+                    .join(format!("{}-aarch64.wasm", filename)),
+            )
+            .unwrap(),
+        }
     }
 
     #[test]
@@ -231,15 +195,15 @@ pub mod test_tube {
             let msg: &[u8] = "Hello World!".as_bytes();
             // VoteSignature
             vote_signatures.push(VoteSignature {
-                message_hash: msg,
-                signature: voter.signing_key().sign(msg).unwrap().as_ref(),
+                message_hash: msg.to_vec(),
+                signature: voter.signing_key().sign(msg).unwrap().as_ref().to_vec(),
             })
         }
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
         let execute_propose_resp = wasm
             .execute(
-                contracts.get("dao-proposal-single-instant").unwrap(),
+                contracts.get("dao_proposal_single_instant").unwrap(),
                 &SingleChoiceInstantProposeMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
@@ -252,14 +216,6 @@ pub mod test_tube {
             )
             .unwrap();
 
-        // TODO: Query things from contract to make assertions
-        // let resp = wasm
-        //     .query::<QueryMsg, PoolResponse>(
-        //         contract_address.as_str(),
-        //         &QueryMsg::VaultExtension(ExtensionQueryMsg::ConcentratedLiquidity(
-        //             ClQueryMsg::Pool {},
-        //         )),
-        //     )
-        //     .unwrap();
+        println!("execute_propose_resp: {:?}", execute_propose_resp);
     }
 }
