@@ -51,12 +51,12 @@ pub mod test_tube {
             // ./packages/dao-voting
             (
                 "dao_voting",
-                get_wasm_byte_code("dao_voting_cw4") // TODO: Check
+                get_wasm_byte_code("dao_voting_cw4") // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
             ),
             // ./contracts/voting/dao-voting-cw4
             (
                 "dao_voting_cw4",
-                get_wasm_byte_code("dao_voting_cw4")
+                get_wasm_byte_code("dao_voting_cw4") // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
             ),
             // ./contracts/proposal/dao-proposal-single-instant
             (
