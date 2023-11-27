@@ -23,8 +23,7 @@ use dao_voting::reply::{
     failed_pre_propose_module_hook_id, mask_proposal_execution_proposal_id, TaggedReplyId,
 };
 use dao_voting::status::Status;
-use dao_voting::threshold::Threshold;
-use dao_voting::threshold::ThresholdError;
+use dao_voting::threshold::{Threshold, ThresholdError};
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
 
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};

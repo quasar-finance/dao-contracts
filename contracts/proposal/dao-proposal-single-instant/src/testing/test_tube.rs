@@ -3,16 +3,16 @@ pub mod test_tube {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use cosmwasm_std::{Coin, to_binary, Uint128};
+    use crate::msg::{InstantiateMsg, SingleChoiceInstantProposeMsg};
+    use crate::state::VoteSignature;
+    use cosmwasm_std::{to_binary, Coin, Uint128};
     use cw_utils::Duration;
-    use dao_interface::state::Admin;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
+    use dao_interface::state::Admin;
     use dao_interface::state::ModuleInstantiateInfo;
     use dao_voting::pre_propose::PreProposeInfo;
     use dao_voting::threshold::Threshold;
     use dao_voting_cw4::msg::GroupContract;
-    use crate::msg::{SingleChoiceInstantProposeMsg, InstantiateMsg};
-    use crate::state::VoteSignature;
     use osmosis_test_tube::Account;
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
 
@@ -51,23 +51,20 @@ pub mod test_tube {
             // ./packages/dao-voting
             (
                 "dao_voting",
-                get_wasm_byte_code("dao_voting_cw4") // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
+                get_wasm_byte_code("dao_voting_cw4"), // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
             ),
             // ./contracts/voting/dao-voting-cw4
             (
                 "dao_voting_cw4",
-                get_wasm_byte_code("dao_voting_cw4") // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
+                get_wasm_byte_code("dao_voting_cw4"), // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
             ),
             // ./contracts/proposal/dao-proposal-single-instant
             (
                 "dao_proposal_single_instant",
-                get_wasm_byte_code("dao_proposal_single_instant")
+                get_wasm_byte_code("dao_proposal_single_instant"),
             ),
             // ./contracts/dao-dao-core
-            (
-                "dao_dao_core",
-                get_wasm_byte_code("dao_dao_core")
-            ),
+            ("dao_dao_core", get_wasm_byte_code("dao_dao_core")),
         ];
 
         // Store contracts and declare a HashMap
@@ -90,10 +87,13 @@ pub mod test_tube {
         // TODO: Create msgs as defined here -> https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
         // We should use structs and serde to serialize it to json, and then to base64
 
-        let initial_members = voters.iter().map(|voter| cw4::Member {
-            addr: voter.address().to_string(),
-            weight: 1,
-        }).collect::<Vec<_>>();
+        let initial_members = voters
+            .iter()
+            .map(|voter| cw4::Member {
+                addr: voter.address().to_string(),
+                weight: 1,
+            })
+            .collect::<Vec<_>>();
 
         // Core
         let dao_dao_core_instantiate_resp = wasm
@@ -136,7 +136,8 @@ pub mod test_tube {
                             allow_revoting: false,
                             pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
                             close_proposal_on_execution_failure: true,
-                        }).unwrap(),
+                        })
+                        .unwrap(),
                         admin: Some(Admin::CoreModule {}),
                         funds: vec![],
                         label: "DAO DAO governance module".to_string(),
@@ -152,7 +153,10 @@ pub mod test_tube {
             .unwrap();
 
         // contracts.insert("dao_dao_core", dao_dao_core.data.address.as_str());
-        println!("dao_dao_core_instantiate_resp: {:?}", dao_dao_core_instantiate_resp);
+        println!(
+            "dao_dao_core_instantiate_resp: {:?}",
+            dao_dao_core_instantiate_resp
+        );
 
         (app, contracts, admin, voters)
     }

@@ -43,10 +43,9 @@ use crate::{
         execute::{
             add_proposal_hook, add_proposal_hook_should_fail, add_vote_hook,
             add_vote_hook_should_fail, close_proposal, close_proposal_should_fail,
-            instantiate_cw20_base_default,
-            make_proposal, mint_cw20s, mint_natives, remove_proposal_hook,
-            remove_proposal_hook_should_fail, remove_vote_hook, remove_vote_hook_should_fail,
-            update_rationale
+            instantiate_cw20_base_default, make_proposal, mint_cw20s, mint_natives,
+            remove_proposal_hook, remove_proposal_hook_should_fail, remove_vote_hook,
+            remove_vote_hook_should_fail, update_rationale,
         },
         instantiate::{
             get_default_non_token_dao_proposal_module_instantiate,
