@@ -100,12 +100,12 @@ pub fn execute(
 ) -> Result<Response, ContractError> {
     match msg {
         ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
-            title,
-            description,
-            msgs,
-            proposer,
-            vote_signatures,
-        }) => execute_propose(deps, env, info, title, description, msgs, proposer, vote_signatures),
+                                title,
+                                description,
+                                msgs,
+                                proposer,
+                                vote_signatures,
+                            }) => execute_propose(deps, env, info, title, description, msgs, proposer, vote_signatures),
         ExecuteMsg::UpdateRationale {
             proposal_id,
             rationale,
