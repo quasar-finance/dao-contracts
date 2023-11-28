@@ -127,9 +127,10 @@ pub mod test_tube {
                             //     threshold: PercentageThreshold,
                             //     quorum: PercentageThreshold,
                             // },
-                            max_voting_period: Duration::Time(0), // 0 seconds
+                            // max_voting_period: Duration::Time(0), // 0 seconds
+                            max_voting_period: Duration::Height(0), // 0 blocks
                             min_voting_period: None,
-                            only_members_execute: true,
+                            only_members_execute: false, // TODO
                             allow_revoting: false,
                             pre_propose_info: PreProposeInfo::AnyoneMayPropose {}, // TODO
                             close_proposal_on_execution_failure: true,
