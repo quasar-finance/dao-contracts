@@ -3,7 +3,7 @@ pub mod test_tube {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use crate::msg::{InstantiateMsg, SingleChoiceInstantProposeMsg, ExecuteMsg};
+    use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::{to_binary, Coin, Uint128};
     use cw_utils::Duration;
@@ -239,7 +239,7 @@ pub mod test_tube {
                     description: "Description".to_string(),
                     msgs: vec![], // TODO: Mock a simple bank transfer that in prod will be the trigger exec to the middleware contract
                     proposer: None, // TODO: Some(admin.address()) is causing "pre-propose modules must specify a proposer. lacking one, no proposer should be specified: execute wasm contract failed"
-                    votes: vec![],
+                    vote_signatures,
                 }),
                 &vec![],
                 &admin,

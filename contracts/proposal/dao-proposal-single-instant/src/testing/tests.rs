@@ -877,7 +877,7 @@ fn test_active_threshold_absolute() {
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                votes: vec![VoteSignature {
+                vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
                 }],
@@ -919,7 +919,7 @@ fn test_active_threshold_absolute() {
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                votes: vec![VoteSignature {
+                vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
                 }],
@@ -966,7 +966,7 @@ fn test_active_threshold_percent() {
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                votes: vec![VoteSignature {
+                vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
                 }],
@@ -1009,7 +1009,7 @@ fn test_active_threshold_percent() {
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                votes: vec![VoteSignature {
+                vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
                 }],
@@ -2038,7 +2038,7 @@ fn test_proposal_too_large() {
                 description: "a".repeat(MAX_PROPOSAL_SIZE as usize),
                 msgs: vec![],
                 proposer: None,
-                votes: vec![VoteSignature {
+                vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
                 }],
@@ -2093,7 +2093,7 @@ fn test_proposal_creation_permissions() {
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                votes: vec![VoteSignature {
+                vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
                 }],
@@ -2122,7 +2122,7 @@ fn test_proposal_creation_permissions() {
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                votes: vec![VoteSignature {
+                vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
                 }],
@@ -2156,7 +2156,7 @@ fn test_proposal_creation_permissions() {
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: Some("ekez".to_string()),
-                votes: vec![VoteSignature {
+                vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
                 }],

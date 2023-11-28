@@ -76,7 +76,7 @@ pub(crate) fn make_proposal(
                     description: "description".to_string(),
                     msgs: msgs.clone(),
                     proposer: None,
-                    votes: vec![VoteSignature {
+                    vote_signatures: vec![VoteSignature {
                         message_hash: todo!(), // TODO
                         signature: todo!(),    // TODO
                     }],

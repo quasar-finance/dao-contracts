@@ -13,6 +13,7 @@ use cw_storage_plus::Bound;
 use cw_utils::{parse_reply_instantiate_data, Duration};
 use dao_hooks::proposal::{new_proposal_hooks, proposal_status_changed_hooks};
 use dao_hooks::vote::new_vote_hooks;
+use dao_interface::msg::QueryMsg::VotingModule;
 use dao_interface::voting::IsActiveResponse;
 use dao_voting::pre_propose::{PreProposeInfo, ProposalCreationPolicy};
 use dao_voting::proposal::{DEFAULT_LIMIT, MAX_PROPOSAL_SIZE};
@@ -22,6 +23,7 @@ use dao_voting::reply::{
 use dao_voting::status::Status;
 use dao_voting::threshold::{Threshold, ThresholdError};
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
+use dao_voting_cw4::msg::QueryMsg::GroupContract;
 use std::collections::HashMap;
 
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
@@ -102,8 +104,8 @@ pub fn execute(
             description,
             msgs,
             proposer,
-            votes,
-        }) => execute_propose(deps, env, info, title, description, msgs, proposer, votes),
+            vote_signatures,
+        }) => execute_propose(deps, env, info, title, description, msgs, proposer, vote_signatures),
         ExecuteMsg::UpdateRationale {
             proposal_id,
             rationale,
@@ -251,13 +253,27 @@ pub fn execute_propose(
     let hooks = new_proposal_hooks(PROPOSAL_HOOKS, deps.storage, id, proposer.as_str())?;
 
     // TODO: Get list of members to check signatures against them
+    let proposal_config = CONFIG.load(deps.storage)?;
+
+    // TODO: query the proposal_config.dao contract to obtain the dao-voting-cw4
+    let dao_voting_cw4_addr: Addr = deps
+        .querier
+        .query_wasm_smart(proposal_config.dao, &VotingModule {})?;
+
+    // TODO: query the dao-voting-cw4 to obtain the cw4-group address
+    let cw4_group_addr: Addr = deps
+        .querier
+        .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
+
+    // TODO: Query the cw4 as below
     let members: MemberListResponse = deps.querier.query_wasm_smart(
-        Addr::unchecked("todo_take_cw4_group_address"),
+        cw4_group_addr.clone(),
         &ListMembers {
             start_after: None, // TODO: Check if Some() needed
             limit: None,       // TODO: Check if Some() needed
         },
     )?;
+    deps.api.debug(format!("members: {:?}", members).as_str());
 
     // As we are passing message_hash and signature tuples, we should be able to always recover the correct publicKey.
     // Given this assumption we should previously check what the majority says leveraging the clear message_hash.
@@ -269,6 +285,8 @@ pub fn execute_propose(
             .or_insert(0) += 1;
     }
 
+    deps.api.debug(format!("message_hash_counts: {:?}", message_hash_counts).as_str());
+
     // Get majority message count and throw error if we have a tie
     let message_hash_majority: Vec<u8> = if let Some(max_count) = message_hash_counts.values().max()
     {
@@ -277,22 +295,27 @@ pub fn execute_propose(
             .filter(|&(_, &count)| count == *max_count)
             .map(|(hash, _)| hash.clone()) // Clone the Vec<u8> here
             .collect();
+        deps.api.debug(format!("max_count_hashes: {:?}", max_count_hashes).as_str());
 
         if max_count_hashes.len() > 1 {
+            deps.api.debug("IF_1");
             // Handle the error case where there is a tie
             return Err(ContractError::ThresholdError(
                 ThresholdError::UnreachableThreshold {},
             ));
         } else {
+            deps.api.debug("ELSE_1");
             // Return message_hash_majority value
             max_count_hashes.into_iter().next().unwrap_or_default()
         }
     } else {
+        deps.api.debug("ELSE_2");
         // Handle the case where there are no votes
         return Err(ContractError::ThresholdError(
             ThresholdError::UnreachableThreshold {},
         ));
     };
+    deps.api.debug(format!("message_hash_majority: {:?}", message_hash_majority).as_str());
 
     // Foreach signature (vote) received, compute vote and vote on proposal
     for vote_signature in &vote_signatures {
@@ -316,7 +339,7 @@ pub fn execute_propose(
                         Vote::No
                     });
                 } else {
-                    // TODO: Skip this iteration and continue
+                    // TODO: Skip this iteration and continue, as we didn't recognize the address on members list
                 }
             }
             Err(_) => {
@@ -327,6 +350,7 @@ pub fn execute_propose(
         // Rationale (optional). TODO: Deprecate this or hardcode it to "".tostring()
         let rationale = Some("I'm voting because this is cool!".to_string());
 
+        deps.api.debug("DEBUG 4");
         // Call proposal_vote only if vote_option is not None
         if let Some(vote) = vote {
             proposal_vote(
@@ -339,9 +363,11 @@ pub fn execute_propose(
             )?;
         }
     }
+    deps.api.debug("DEBUG 5");
 
     // TODO: Implement proposal_execute()
     proposal_execute(deps.branch(), env, info.clone(), id)?;
+    deps.api.debug("DEBUG 6");
 
     Ok(Response::default()
         .add_submessages(hooks)

@@ -57,7 +57,7 @@ pub struct SingleChoiceInstantProposeMsg {
     /// set the proposer of the proposal it creates.
     pub proposer: Option<String>,
     /// TODO: doc
-    pub votes: Vec<VoteSignature>,
+    pub vote_signatures: Vec<VoteSignature>,
 }
 
 #[cw_serde]

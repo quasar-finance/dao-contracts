@@ -29,9 +29,7 @@ cw4 = { workspace = true }
 cw4-group = { workspace = true }
 thiserror = { workspace = true }
 
-#k256 = { version = "0.13.2", features = ["ecdsa"] } # added for single-instant
-#digest = "0.10.7" # added for single-instant
-
+dao-voting-cw4 = { workspace = true } # moved for single-instant
 dao-dao-macros = { workspace = true }
 dao-pre-propose-base = { workspace = true }
 dao-interface = { workspace = true }
@@ -47,7 +45,6 @@ cw-proposal-single-v1 = { workspace = true, features = ["library"] }
 cosmwasm-schema = { workspace = true }
 cw-multi-test = { workspace = true }
 dao-dao-core = { workspace = true }
-dao-voting-cw4 = { workspace = true }
 dao-voting-cw20-balance = { workspace = true }
 dao-voting-cw20-staked = { workspace = true }
 dao-voting-token-staked = { workspace = true }
