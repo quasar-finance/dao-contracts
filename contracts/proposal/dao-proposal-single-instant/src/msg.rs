@@ -56,7 +56,10 @@ pub struct SingleChoiceInstantProposeMsg {
     /// pre-propose module is attached, this must be Some and will
     /// set the proposer of the proposal it creates.
     pub proposer: Option<String>,
-    /// TODO: doc
+    /// vote_signatures is a list of VoteSignature objects which
+    /// has a message_hash vec and the associated signatures from signers
+    /// This is considered as a list of offchain votes, which is being sent
+    /// to the contract for further sig verification, quorum validations.
     pub vote_signatures: Vec<VoteSignature>,
 }
 

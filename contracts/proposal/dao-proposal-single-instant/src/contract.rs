@@ -202,7 +202,7 @@ pub fn execute_propose(
 
     let total_power = get_total_power(deps.as_ref(), &config.dao, Some(env.block.height))?;
 
-    let proposal = {
+    let mut proposal = {
         // Limit mutability to this block.
         let mut proposal = SingleChoiceProposal {
             title,
@@ -364,6 +364,10 @@ pub fn execute_propose(
         }
     }
     deps.api.debug("DEBUG 5");
+
+    // Update proposal status, to passed as sig verification and quorum is achieved.
+    proposal.status = Status::Passed;
+    PROPOSALS.save(deps.storage, id, &proposal)?;
 
     // TODO: Implement proposal_execute()
     proposal_execute(deps.branch(), env, info.clone(), id)?;
