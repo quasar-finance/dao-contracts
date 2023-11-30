@@ -25,9 +25,10 @@ use dao_voting::threshold::{Threshold, ThresholdError};
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
 use dao_voting_cw4::msg::QueryMsg::GroupContract;
 use std::collections::HashMap;
+use std::fmt::Display;
 
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
-use crate::proposal::{next_proposal_id, SingleChoiceProposal};
+use crate::proposal::{next_proposal_id, SingleChoiceInstantPropose};
 use crate::state::{Config, VoteSignature, CREATION_POLICY};
 
 use crate::v1_state::{
@@ -204,7 +205,7 @@ pub fn execute_propose(
 
     let mut proposal = {
         // Limit mutability to this block.
-        let mut proposal = SingleChoiceProposal {
+        let mut proposal = SingleChoiceInstantPropose {
             title,
             description,
             proposer: proposer.clone(),
@@ -324,33 +325,47 @@ pub fn execute_propose(
             &vote_signature.signature,
             1u8,
         );
+        deps.api.debug(format!("pubkey_result: {:?} {:?}", pubkey_result, vote_signature).as_str());
 
         let mut vote: Option<Vote> = None;
         match pubkey_result {
             Ok(pubkey) => {
-                let address = pubkey_to_address(&pubkey);
 
+                let address = pubkey_to_address(&pubkey);
+                deps.api.debug(format!("DEBUG - address-1 {:?} address-2 {:?}",
+                                       address.clone().as_str(),  address.clone().into_string() ).as_str());
                 if members.members.iter().any(|member| member.addr == address) {
                     // Members has been found
+                    deps.api.debug(format!("DEBUG - Members has been found  {:?} ", address ).as_str());
                     // TODO: Compute yes or no vote based on majority previous computed.
                     vote = Some(if vote_signature.message_hash == message_hash_majority {
+
                         Vote::Yes
                     } else {
                         Vote::No
                     });
+
+                    deps.api.debug(format!("DEBUG - Vote  {:?} ", vote ).as_str());
+
                 } else {
+                    deps.api.debug(format!("DEBUG - didn't recognize the address on members list  {:?} ",
+                                           address ).as_str());
                     // TODO: Skip this iteration and continue, as we didn't recognize the address on members list
                 }
             }
             Err(_) => {
+
                 // Handle error, log or push to invalid
+                deps.api.debug(format!("DEBUG - ERROR  {:?} {:?} ",
+                                       vote_signature, pubkey_result ).as_str());
             }
         }
 
         // Rationale (optional). TODO: Deprecate this or hardcode it to "".tostring()
         let rationale = Some("I'm voting because this is cool!".to_string());
 
-        deps.api.debug("DEBUG 4");
+        deps.api.debug(format!("DEBUG 4 {:?} {:?} {:?} ",
+                               vote_signature, vote , rationale ).as_str());
         // Call proposal_vote only if vote_option is not None
         if let Some(vote) = vote {
             proposal_vote(
@@ -363,15 +378,21 @@ pub fn execute_propose(
             )?;
         }
     }
+
+
+
     deps.api.debug("DEBUG 5");
 
+    let status :Status =  proposal.current_status(&env.block);
+    deps.api.debug(format!("Status: {:?}", status).as_str());
+    deps.api.debug("DEBUG 6");
     // Update proposal status, to passed as sig verification and quorum is achieved.
     proposal.status = Status::Passed;
     PROPOSALS.save(deps.storage, id, &proposal)?;
 
     // TODO: Implement proposal_execute()
     proposal_execute(deps.branch(), env, info.clone(), id)?;
-    deps.api.debug("DEBUG 6");
+    deps.api.debug("DEBUG 7");
 
     Ok(Response::default()
         .add_submessages(hooks)
@@ -395,11 +416,14 @@ fn proposal_vote(
     vote: Vote,
     rationale: Option<String>,
 ) -> Result<Response, ContractError> {
+
+    deps.api.debug( "DEBUG - inside proposal_vote");
     let config = CONFIG.load(deps.storage)?;
     let mut prop = PROPOSALS
         .may_load(deps.storage, proposal_id)?
         .ok_or(ContractError::NoSuchProposal { id: proposal_id })?;
 
+    deps.api.debug(format!("DEBUG - prop : {:?}", prop).as_str());
     // Allow voting on proposals until they expire.
     // Voting on a non-open proposal will never change
     // their outcome as if an outcome has been determined,
@@ -900,7 +924,7 @@ pub fn query_list_proposals(
     let props: Vec<ProposalResponse> = PROPOSALS
         .range(deps.storage, min, None, cosmwasm_std::Order::Ascending)
         .take(limit as usize)
-        .collect::<Result<Vec<(u64, SingleChoiceProposal)>, _>>()?
+        .collect::<Result<Vec<(u64, SingleChoiceInstantPropose)>, _>>()?
         .into_iter()
         .map(|(id, proposal)| proposal.into_response(&env.block, id))
         .collect();
@@ -919,7 +943,7 @@ pub fn query_reverse_proposals(
     let props: Vec<ProposalResponse> = PROPOSALS
         .range(deps.storage, None, max, cosmwasm_std::Order::Descending)
         .take(limit as usize)
-        .collect::<Result<Vec<(u64, SingleChoiceProposal)>, _>>()?
+        .collect::<Result<Vec<(u64, SingleChoiceInstantPropose)>, _>>()?
         .into_iter()
         .map(|(id, proposal)| proposal.into_response(&env.block, id))
         .collect();
@@ -1045,7 +1069,7 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, Co
                         return Err(ContractError::PendingProposals {});
                     }
 
-                    let migrated_proposal = SingleChoiceProposal {
+                    let migrated_proposal = SingleChoiceInstantPropose {
                         title: prop.title,
                         description: prop.description,
                         proposer: prop.proposer,

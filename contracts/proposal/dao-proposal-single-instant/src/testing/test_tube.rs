@@ -1,8 +1,11 @@
 #[cfg(test)]
+
 pub mod test_tube {
     use std::collections::HashMap;
     use std::path::PathBuf;
-
+    // For message hex
+    use hex;
+    use sha2::{Sha256, Digest};
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::{to_binary, Coin, Uint128};
@@ -25,6 +28,25 @@ pub mod test_tube {
     /// Test constants
     const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
 
+
+    /*
+    pub fn compute_sha256_hash(hex_message: &str) -> Result<String, hex::FromHexError> {
+        let message_bytes = hex::decode(hex_message)?;
+        let mut hasher = Sha256::new();
+        hasher.update(&message_bytes);
+        let result = hasher.finalize();
+        Ok(format!("{:x}", result))
+    }
+    */
+    fn compute_sha256_hash(message: &str) -> Result<String, hex::FromHexError> {
+        let mut hasher = Sha256::new();
+        hasher.update(message.as_bytes());
+        let result = hasher.finalize();
+        Ok(hex::encode(result))
+    }
+
+
+
     pub fn test_init(
         voters_number: u32,
     ) -> (
@@ -37,18 +59,27 @@ pub mod test_tube {
         let app = OsmosisTestApp::new();
         let wasm = Wasm::new(&app);
 
-        // Create new account with initial funds
+        // Create new admin account with initial funds
+        // The contract admin, to be used during store code.
         let admin: SigningAccount = app
             .init_account(&[Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo")])
             .unwrap();
 
-        // Create voters accounts
+        // Create voters accounts with initial funds
         let mut voters: Vec<SigningAccount> = vec![];
         for _ in 0..voters_number {
             voters.push(
                 app.init_account(&[Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo")])
                     .unwrap(),
             )
+        }
+
+        for voter in &voters {
+            println!("Prefix: {:?}", voter.prefix());
+            println!("Signing Key: {:?}", voter.signing_key().public_key());
+            println!("Fee Setting: {:?}", voter.fee_setting());
+            println!("Public_key : {:?}", voter.public_key());
+            println!("---------------------------");
         }
 
         // Create a vector of cw4::Member
@@ -217,15 +248,47 @@ pub mod test_tube {
         // TODO: Mock signatures taking voter.publickey to recover the sig
         let mut vote_signatures: Vec<VoteSignature> = vec![];
         for voter in voters {
+            println!("voter: {:?}", voter.address());
+            let msg = "Hello World!";
+            let hash = compute_sha256_hash(msg);
+            println!("hash: {:?}", hash);
+            match hash {
+                Ok(hash_str) => {
+                    match hex::decode(&hash_str) {
+                        Ok(hash_bytes) => {
+                            // VoteSignature
+                            vote_signatures.push(VoteSignature {
+                                message_hash: hash_bytes,
+                                signature: voter.signing_key().sign(msg.as_bytes()).unwrap().as_ref().to_vec(),
+                            })
+                        }
+                        Err(e) => {
+                            // Handle the error, maybe with a panic or by returning an error
+                            panic!("Error decoding hash: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Handle the error in hash computation, maybe with a panic or by returning an error
+                    panic!("Error computing hash: {}", e);
+                }
+            }
+        } // for
+
+        /*
+        for voter in voters {
             // Dummy message
-            let msg: &[u8] = "Hello World!".as_bytes();
+            // let msg: &[u8] = "Hello World!".as_bytes();
+            let msg = "Hello World!";
+            let hash = compute_sha256_hash(msg);
             // VoteSignature
             vote_signatures.push(VoteSignature {
-                message_hash: msg.to_vec(),
-                signature: voter.signing_key().sign(msg).unwrap().as_ref().to_vec(),
+                //message_hash: msg.to_vec(),
+                message_hash : hash.unwrap().into_bytes(),
+                signature: voter.signing_key().sign(msg.as_bytes()).unwrap().as_ref().to_vec(),
             })
         }
-
+        */
         // TODO: Do Admin send from admin to treasury
         // TODO: Get Admin balance before
 

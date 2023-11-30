@@ -1953,7 +1953,9 @@ dependencies = [
  "dao-voting-cw4",
  "dao-voting-cw721-staked",
  "dao-voting-token-staked",
+ "hex",
  "osmosis-test-tube",
+ "sha2 0.10.7",
  "thiserror",
 ]
 

@@ -31,7 +31,7 @@ use dao_voting::{
 use crate::{
     contract::{migrate, CONTRACT_NAME, CONTRACT_VERSION},
     msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg, SingleChoiceInstantProposeMsg},
-    proposal::SingleChoiceProposal,
+    proposal::SingleChoiceInstantPropose,
     query::{ProposalResponse, VoteInfo},
     state::{Config, VoteSignature},
     testing::{
@@ -113,7 +113,7 @@ fn test_simple_propose_staked_balances() {
 
     // These values just come from the default instantiate message
     // values.
-    let expected = SingleChoiceProposal {
+    let expected = SingleChoiceInstantPropose {
         title: "title".to_string(),
         description: "description".to_string(),
         proposer: Addr::unchecked(CREATOR_ADDR),
@@ -162,7 +162,7 @@ fn test_simple_proposal_cw4_voting() {
 
     // These values just come from the default instantiate message
     // values.
-    let expected = SingleChoiceProposal {
+    let expected = SingleChoiceInstantPropose {
         title: "title".to_string(),
         description: "description".to_string(),
         proposer: Addr::unchecked(CREATOR_ADDR),
@@ -266,7 +266,7 @@ fn test_instantiate_with_non_voting_module_cw20_deposit() {
 
     // These values just come from the default instantiate message
     // values.
-    let expected = SingleChoiceProposal {
+    let expected = SingleChoiceInstantPropose {
         title: "title".to_string(),
         description: "description".to_string(),
         proposer: Addr::unchecked(CREATOR_ADDR),
@@ -697,7 +697,7 @@ fn test_anyone_may_propose_and_proposal_listing() {
         four_and_five.proposals[0],
         ProposalResponse {
             id: 4,
-            proposal: SingleChoiceProposal {
+            proposal: SingleChoiceInstantPropose {
                 title: "title".to_string(),
                 description: "description".to_string(),
                 proposer: Addr::unchecked("pppppp"),
@@ -1984,7 +1984,7 @@ fn test_reply_proposal_mock() {
         .save(
             deps.as_mut().storage,
             1,
-            &SingleChoiceProposal {
+            &SingleChoiceInstantPropose {
                 title: "A simple text proposal".to_string(),
                 description: "This is a simple text proposal".to_string(),
                 proposer: Addr::unchecked(CREATOR_ADDR),

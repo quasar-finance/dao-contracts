@@ -22,6 +22,9 @@ integration-test: deploy-local workspace-optimize
 test-tube:
     cargo test --features "test-tube"
 
+test-tube-proposal-single-instant:
+    cargo test --package dao-proposal-single-instant --lib -- --include-ignored testing::test_tube --nocapture --test-threads=1
+
 test-tube-dev: workspace-optimize
     cargo test --features "test-tube"
 
