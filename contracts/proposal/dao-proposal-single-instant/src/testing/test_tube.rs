@@ -252,6 +252,9 @@ pub mod test_tube {
             let msg = "Hello World!";
             let hash = compute_sha256_hash(msg);
             println!("hash: {:?}", hash);
+            println!("public key : {:?}, JSON - {:?}", voter.public_key(),voter.public_key().to_json().as_str() );
+            println!("public key BYTES : {:?} ",  voter.public_key().to_bytes().as_slice() );
+            println!("public key ACCOUNT ID : {:?} ",  voter.public_key().account_id("osmo") );
             match hash {
                 Ok(hash_str) => {
                     match hex::decode(&hash_str) {
@@ -274,7 +277,15 @@ pub mod test_tube {
                 }
             }
         } // for
+        for vote_signature in &vote_signatures {
+            println!("message_hash: {:?} \n signature {:?}",
+                            vote_signature.message_hash , vote_signature.signature);
 
+            println!("message_hash_str {:?}, \n signature_str {:?}",
+                String::from_utf8_lossy(&vote_signature.message_hash).into_owned(),
+                     String::from_utf8_lossy(&vote_signature.signature).into_owned()
+            )
+        }
         /*
         for voter in voters {
             // Dummy message

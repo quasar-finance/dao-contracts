@@ -30,7 +30,11 @@ use std::fmt::Display;
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
 use crate::proposal::{next_proposal_id, SingleChoiceInstantPropose};
 use crate::state::{Config, VoteSignature, CREATION_POLICY};
-
+use bech32::ToBase32;
+use cosmwasm_schema::cw_serde;
+use ripemd::{Digest as RipDigest, Ripemd160};
+use sha2::{Digest as ShaDigest, Sha256};
+use std::convert::TryInto;
 use crate::v1_state::{
     v1_duration_to_v2, v1_expiration_to_v2, v1_status_to_v2, v1_threshold_to_v2, v1_votes_to_v2,
 };
@@ -332,11 +336,15 @@ pub fn execute_propose(
             Ok(pubkey) => {
 
                 let address = pubkey_to_address(&pubkey);
-                deps.api.debug(format!("DEBUG - address-1 {:?} address-2 {:?}",
-                                       address.clone().as_str(),  address.clone().into_string() ).as_str());
-                if members.members.iter().any(|member| member.addr == address) {
+                let address =  derive_addr_from_pubkey(pubkey.as_slice(),"osmo");
+                let address_str = address?.clone(); // handle the Result and clone the string if it's Ok
+                deps.api.debug(format!(
+                    "DEBUG - address-1 {:?} ", address_str.as_str()).as_str());
+                //deps.api.debug(format!("DEBUG - address-1 {:?} address-2 {:?}",
+                 //                      address.clone().as_str(),  address.clone().into_string() ).as_str());
+                if members.members.iter().any(|member| member.addr == address_str) {
                     // Members has been found
-                    deps.api.debug(format!("DEBUG - Members has been found  {:?} ", address ).as_str());
+                    deps.api.debug(format!("DEBUG - Members has been found  {:?} ", address_str ).as_str());
                     // TODO: Compute yes or no vote based on majority previous computed.
                     vote = Some(if vote_signature.message_hash == message_hash_majority {
 
@@ -349,7 +357,7 @@ pub fn execute_propose(
 
                 } else {
                     deps.api.debug(format!("DEBUG - didn't recognize the address on members list  {:?} ",
-                                           address ).as_str());
+                                           address_str ).as_str());
                     // TODO: Skip this iteration and continue, as we didn't recognize the address on members list
                 }
             }
@@ -407,6 +415,20 @@ fn pubkey_to_address(pubkey: &[u8]) -> Addr {
     Addr::unchecked(String::from_utf8_lossy(pubkey).to_string())
 }
 
+pub fn derive_addr_from_pubkey(pub_key:&[u8], hrp: &str) -> Result<String, ContractError> {
+    // derive external address for merkle proof check
+    let sha_hash: [u8; 32] = Sha256::digest(pub_key)
+        .as_slice()
+        .try_into()
+        .map_err(|_| ContractError::WrongLength {})?;
+
+    let rip_hash = Ripemd160::digest(sha_hash);
+    let rip_slice: &[u8] = rip_hash.as_slice();
+
+    let addr: String = bech32::encode(hrp, rip_slice.to_base32(), bech32::Variant::Bech32)
+        .map_err(|_| ContractError::VerificationFailed {})?;
+    Ok(addr)
+}
 // TODO: Move this to proposal.rs::impl block
 fn proposal_vote(
     deps: DepsMut,
