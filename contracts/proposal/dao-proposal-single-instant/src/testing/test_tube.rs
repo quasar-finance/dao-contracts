@@ -4,8 +4,6 @@ pub mod test_tube {
     use std::collections::HashMap;
     use std::path::PathBuf;
     // For message hex
-    use hex;
-    use sha2::{Sha256, Digest};
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::{to_binary, Coin, Uint128};
@@ -16,8 +14,10 @@ pub mod test_tube {
     use dao_voting::pre_propose::PreProposeInfo;
     use dao_voting::threshold::Threshold;
     use dao_voting_cw4::msg::GroupContract;
+    use hex;
     use osmosis_test_tube::Account;
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
+    use sha2::{Digest, Sha256};
 
     /// Init constants
     const SLUG_DAO_DAO_CORE: &str = "dao_dao_core";
@@ -27,7 +27,6 @@ pub mod test_tube {
 
     /// Test constants
     const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
-
 
     /*
     pub fn compute_sha256_hash(hex_message: &str) -> Result<String, hex::FromHexError> {
@@ -44,8 +43,6 @@ pub mod test_tube {
         let result = hasher.finalize();
         Ok(hex::encode(result))
     }
-
-
 
     pub fn test_init(
         voters_number: u32,
@@ -72,14 +69,6 @@ pub mod test_tube {
                 app.init_account(&[Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo")])
                     .unwrap(),
             )
-        }
-
-        for voter in &voters {
-            println!("Prefix: {:?}", voter.prefix());
-            println!("Signing Key: {:?}", voter.signing_key().public_key());
-            println!("Fee Setting: {:?}", voter.fee_setting());
-            println!("Public_key : {:?}", voter.public_key());
-            println!("---------------------------");
         }
 
         // Create a vector of cw4::Member
@@ -242,19 +231,35 @@ pub mod test_tube {
     #[test]
     #[ignore]
     fn test_dao_proposal_single_instant() {
-        let (app, contracts, admin, voters) = test_init(3);
+        let (app, contracts, admin, voters) = test_init(1);
         let wasm = Wasm::new(&app);
 
         // TODO: Mock signatures taking voter.publickey to recover the sig
         let mut vote_signatures: Vec<VoteSignature> = vec![];
         for voter in voters {
-            println!("voter: {:?}", voter.address());
+            println!("------------TT-------------");
+            println!("Prefix: {:?}", voter.prefix());
+            println!("Signing Key: {:?}", voter.signing_key().public_key());
+            println!("Fee Setting: {:?}", voter.fee_setting());
+            println!("Public_key : {:?}", voter.public_key());
+            println!("Address : {:?}", voter.address());
             let msg = "Hello World!";
             let hash = compute_sha256_hash(msg);
             println!("hash: {:?}", hash);
-            println!("public key : {:?}, JSON - {:?}", voter.public_key(),voter.public_key().to_json().as_str() );
-            println!("public key BYTES : {:?} ",  voter.public_key().to_bytes().as_slice() );
-            println!("public key ACCOUNT ID : {:?} ",  voter.public_key().account_id("osmo") );
+            println!(
+                "public key : {:?}, JSON - {:?}",
+                voter.public_key(),
+                voter.public_key().to_json().as_str()
+            );
+            println!(
+                "public key BYTES : {:?} ",
+                voter.public_key().to_bytes().as_slice()
+            );
+            println!(
+                "public key ACCOUNT ID : {:?} ",
+                voter.public_key().account_id("osmo")
+            );
+            println!("------------TT-------------");
             match hash {
                 Ok(hash_str) => {
                     match hex::decode(&hash_str) {
@@ -262,7 +267,12 @@ pub mod test_tube {
                             // VoteSignature
                             vote_signatures.push(VoteSignature {
                                 message_hash: hash_bytes,
-                                signature: voter.signing_key().sign(msg.as_bytes()).unwrap().as_ref().to_vec(),
+                                signature: voter
+                                    .signing_key()
+                                    .sign(msg.as_bytes())
+                                    .unwrap()
+                                    .as_ref()
+                                    .to_vec(),
                             })
                         }
                         Err(e) => {
@@ -276,30 +286,22 @@ pub mod test_tube {
                     panic!("Error computing hash: {}", e);
                 }
             }
-        } // for
-        for vote_signature in &vote_signatures {
-            println!("message_hash: {:?} \n signature {:?}",
-                            vote_signature.message_hash , vote_signature.signature);
+        }
 
-            println!("message_hash_str {:?}, \n signature_str {:?}",
+        // TODO: DEBUG, remove this
+        for vote_signature in &vote_signatures {
+            println!(
+                "message_hash: {:?} \n signature {:?}",
+                vote_signature.message_hash, vote_signature.signature
+            );
+
+            println!(
+                "message_hash_str {:?}, \n signature_str {:?}",
                 String::from_utf8_lossy(&vote_signature.message_hash).into_owned(),
-                     String::from_utf8_lossy(&vote_signature.signature).into_owned()
+                String::from_utf8_lossy(&vote_signature.signature).into_owned()
             )
         }
-        /*
-        for voter in voters {
-            // Dummy message
-            // let msg: &[u8] = "Hello World!".as_bytes();
-            let msg = "Hello World!";
-            let hash = compute_sha256_hash(msg);
-            // VoteSignature
-            vote_signatures.push(VoteSignature {
-                //message_hash: msg.to_vec(),
-                message_hash : hash.unwrap().into_bytes(),
-                signature: voter.signing_key().sign(msg.as_bytes()).unwrap().as_ref().to_vec(),
-            })
-        }
-        */
+
         // TODO: Do Admin send from admin to treasury
         // TODO: Get Admin balance before
 

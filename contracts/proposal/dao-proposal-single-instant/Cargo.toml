@@ -42,9 +42,6 @@ voting-v1 = { workspace = true }
 cw-proposal-single-v1 = { workspace = true, features = ["library"] }
 hex = "0.4.3"
 sha2 = { version = "0.10.7", features = [] }
-#hex = "0.4.3"
-#sha2 = "0.10.0"
-#digest = "0.10.0"
 ripemd = "0.1.1"
 bech32 = "0.9.0"
 
