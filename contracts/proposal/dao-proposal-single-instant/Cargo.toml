@@ -46,6 +46,7 @@ ripemd = "0.1.1"
 bech32 = "0.9.0"
 
 [dev-dependencies]
+cosmrs = { workspace = true }
 cosmwasm-schema = { workspace = true }
 cw-multi-test = { workspace = true }
 dao-dao-core = { workspace = true }

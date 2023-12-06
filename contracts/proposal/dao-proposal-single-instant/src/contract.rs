@@ -350,6 +350,20 @@ pub fn execute_propose(
             .as_str(),
         );
 
+ let pubkey_slice = pubkey_result.as_ref().unwrap().as_slice();
+// Now you can use pubkey_slice, and pubkey_result remains valid for later use
+
+        let is_pubkey_ok = deps.api.secp256k1_verify(&vote_signature.message_hash,
+                                                     &vote_signature.signature,
+                                                     pubkey_slice);
+
+        let message = match is_pubkey_ok {
+            Ok(value) => format!("is_pubkey_ok: {}", value),
+            Err(e) => format!("Error checking pubkey: {:?}", e),
+        };
+        deps.api.debug(format!("pubkey_result: {:?} {:?}", pubkey_result, vote_signature).as_str());
+        deps.api.debug(format!("is_pubkey_ok: {:?}", message).as_str());
+       // let tmp = deps.api.VerifyingKey.from_sec1_bytes(pubkey.as_slice());
         let mut vote: Option<Vote> = None;
         match pubkey_result {
             Ok(pubkey) => {
@@ -415,6 +429,7 @@ pub fn execute_propose(
         }
     }
 
+    deps.api.debug("DEBUG 5");
     let status: Status = proposal.current_status(&env.block);
     deps.api.debug(format!("Status: {:?}", status).as_str());
     deps.api.debug("DEBUG 6");

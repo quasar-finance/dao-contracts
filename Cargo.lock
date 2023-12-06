@@ -1929,6 +1929,7 @@ name = "dao-proposal-single-instant"
 version = "2.3.0"
 dependencies = [
  "bech32",
+ "cosmrs 0.9.0",
  "cosmwasm-schema",
  "cosmwasm-std",
  "cosmwasm-storage",
