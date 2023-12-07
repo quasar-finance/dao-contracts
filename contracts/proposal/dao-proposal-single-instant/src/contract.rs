@@ -337,6 +337,11 @@ pub fn execute_propose(
 
     // Foreach signature (vote) received, compute vote and vote on proposal
     for vote_signature in &vote_signatures {
+        //let pubkey_result = deps.api.secp256k1_recover_pubkey(
+        //    &vote_signature.message_hash,
+         //   &vote_signature.signature,
+          //  1u8,
+        //);
         let pubkey_result = deps.api.secp256k1_recover_pubkey(
             &vote_signature.message_hash,
             &vote_signature.signature,

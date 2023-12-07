@@ -74,6 +74,8 @@ thiserror = { version = "1.0" }
 token-bindings = "0.11.0"
 wynd-utils = "0.4"
 cosmrs = "0.9.0"
+hex = "0.4.3"
+hex-literal = "0.3.1"
 # One commit ahead of version 0.3.0. Allows initialization with an
 # optional owner.
 cw-ownable = "0.5"

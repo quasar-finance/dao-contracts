@@ -7,7 +7,7 @@ pub mod test_tube {
     // For message hex
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
-    use cosmwasm_std::{to_binary, Coin, Uint128, Deps, DepsMut};
+    use cosmwasm_std::{to_binary, Coin, Uint128, Deps, DepsMut, Api};
     use cw_utils::Duration;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
     use dao_interface::state::Admin;
@@ -15,7 +15,9 @@ pub mod test_tube {
     use dao_voting::pre_propose::PreProposeInfo;
     use dao_voting::threshold::Threshold;
     use dao_voting_cw4::msg::GroupContract;
-    use hex;
+    // use hex;
+    use hex_literal::hex;
+
     use osmosis_test_tube::Account;
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
     use sha2::{Digest, Sha256};
@@ -278,6 +280,7 @@ pub mod test_tube {
                 voter.public_key().account_id("osmo")
             );
             println!("------------TT-------------");
+
             match hash {
                 Ok(hash_str) => {
                     match hex::decode(&hash_str) {
@@ -401,7 +404,88 @@ pub mod test_tube {
         let bech_32_str = tm_key.to_bech32("osmo");
         println!("bech_32_str {:?}", bech_32_str);
         println!("to_hex - {:?}", tm_key.to_hex());
+
+
     }
 
 
+    #[test]
+    #[ignore]
+    fn test_secp_sig_3() {
+
+        let (app, _contracts, _admin, voters) = test_init(1);
+        let voter = &voters[0];
+        let pub_key = voter.public_key();
+
+        println!("Voter Public Key: {:?}", pub_key);
+        println!("Public Key JSON: {:?}", pub_key.to_json());
+        println!("Public Key Bytes: {:?}", pub_key.to_bytes());
+        println!("Public Key Account ID: {:?}", pub_key.account_id("osmo"));
+        println!("Public Key String: {:?}", pub_key.to_string());
+
+        let tm_key: cosmrs::tendermint::PublicKey = pub_key
+            .try_into()
+            .expect("Failed to convert to Tendermint public key");
+        let secp_key = tm_key.secp256k1()
+            .expect("Failed to get secp256k1 representation");
+        println!("Secp256k1 Public Key: {:?}", secp_key);
+
+        // Ref for message sample data,
+        // https://gist.github.com/webmaster128/130b628d83621a33579751846699ed15
+
+        let msg = "17cd4a74d724d55355b6fb2b0759ca095298e3fd1856b87ca1cb2df5409058022736d21be071d820b16dfc441be97fbcea5df787edc886e759475469e2128b22f26b82ca993be6695ab190e673285d561d3b6d42fcc1edd6d12db12dcda0823e9d6079e7bc5ff54cd452dad308d52a15ce9c7edd6ef3dad6a27becd8e001e80f";
+        let hash_result = compute_sha256_hash(msg).expect("Failed to compute hash");
+
+        let hash_result_decoded = hex::decode(hash_result.as_bytes())
+            .expect("Invalid hex string");
+        let expected_hash = "586052916fb6f746e1d417766cceffbe1baf95579bab67ad49addaaa6e798862";
+
+        assert_eq!(hash_result, expected_hash, "Hash does not match expected value");
+
+        println!("msg: {:?}", msg);
+        println!("hash_result: {:?}", hash_result);
+        println!("hash_result_bytes: {:?}", hash_result.as_bytes());
+        println!("hash_result_decoded: {:?}", hash_result_decoded);
+        println!("expected_hash: {:?}", expected_hash);
+
+
+        let signature = voter.signing_key()
+            //.sign(hash_result.as_bytes())
+            .sign(hash_result_decoded.as_slice())
+            .expect("Failed to sign hash")
+            .to_vec();
+
+        println!("signature: {:?}", signature);
+
+        /*
+        let signature_2 = voter.signing_key().
+            sign(hash_result_decoded.as_slice()).
+            unwrap()
+            .as_ref()
+            .to_vec();
+        println!("signature: {:?}", signature);
+
+
+        */
+
+        let api = cosmwasm_std::testing::MockApi::default();
+        let pubkey_result = api
+            .secp256k1_recover_pubkey(
+                hash_result_decoded.as_slice(),
+                &signature, 1u8)
+            .expect("Failed to recover public key");
+
+        println!("Signature: {:?}", signature);
+        println!("Recovered Public Key: {:?}", pubkey_result);
+
+        // Convert to `tendermint::PublicKey`
+        let tm_pubkey = cosmrs::tendermint::PublicKey::from_raw_secp256k1(&pubkey_result.as_slice())
+            .expect("Failed to create tendermint public key");
+
+        // Convert to your `PublicKey`
+        let my_pubkey: cosmrs::tendermint::PublicKey = tm_pubkey.into();
+        println!("tm_pubkey: {:?}", tm_pubkey);
+        println!("my_pubkey: {:?}", my_pubkey);
+
+    }
 }
