@@ -25,7 +25,6 @@ use dao_voting::threshold::{Threshold, ThresholdError};
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
 use dao_voting_cw4::msg::QueryMsg::GroupContract;
 use std::collections::HashMap;
-use std::fmt::Display;
 
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
 use crate::proposal::{next_proposal_id, SingleChoiceInstantPropose};
@@ -42,9 +41,8 @@ use crate::{
     state::{Ballot, BALLOTS, CONFIG, PROPOSALS, PROPOSAL_COUNT, PROPOSAL_HOOKS, VOTE_HOOKS},
 };
 use bech32::ToBase32;
-use cosmwasm_schema::cw_serde;
 use ripemd::{Digest as RipDigest, Ripemd160};
-use sha2::{Digest as ShaDigest, Sha256};
+use sha2::{Digest as ShaDigest, Sha256}; // TODO: CHeck which Digest is better to use
 use std::convert::TryInto;
 
 pub(crate) const CONTRACT_NAME: &str = "crates.io:dao-proposal-single-instant";
@@ -160,6 +158,51 @@ pub fn execute(
     }
 }
 
+// fn compress_public_key(uncompressed_key: &[u8]) -> Option<Vec<u8>> {
+//     VerifyingKey::from_sec1_bytes(uncompressed_key).ok().map(|key| {
+//         EncodedPoint::from(key).compress().as_bytes().to_vec()
+//     })
+// }
+fn compress_public_key(pubkey_uncompressed: &[u8]) -> Option<Vec<u8>> {
+    if pubkey_uncompressed.len() != 65 || pubkey_uncompressed[0] != 0x04 {
+        // Invalid public key format
+        return None;
+    }
+
+    // Copy the x-coordinate
+    let x_coord = &pubkey_uncompressed[1..33];
+
+    // Determine the prefix based on the y-coordinate's last bit
+    let prefix = if pubkey_uncompressed.last()? & 1 == 0 {
+        0x02
+    } else {
+        0x03
+    };
+
+    // Create compressed public key
+    let mut pubkey_compressed = Vec::with_capacity(33);
+    pubkey_compressed.push(prefix);
+    pubkey_compressed.extend_from_slice(x_coord);
+
+    Some(pubkey_compressed)
+}
+
+// TODO: Move this to helpers.rs
+pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
+    // derive external address for merkle proof check
+    let sha_hash: [u8; 32] = Sha256::digest(pub_key)
+        .as_slice()
+        .try_into()
+        .map_err(|_| ContractError::WrongLength {})?;
+
+    let rip_hash = Ripemd160::digest(sha_hash);
+    let rip_slice: &[u8] = rip_hash.as_slice();
+
+    let addr: String = bech32::encode(hrp, rip_slice.to_base32(), bech32::Variant::Bech32)
+        .map_err(|_| ContractError::VerificationFailed {})?;
+    Ok(addr)
+}
+
 pub fn execute_propose(
     mut deps: DepsMut,
     env: Env,
@@ -216,7 +259,7 @@ pub fn execute_propose(
 
     let total_power = get_total_power(deps.as_ref(), &config.dao, Some(env.block.height))?;
 
-    let mut proposal = {
+    let proposal = {
         // Limit mutability to this block.
         let mut proposal = SingleChoiceInstantPropose {
             title,
@@ -279,15 +322,14 @@ pub fn execute_propose(
         .querier
         .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
 
-    // TODO: Query the cw4 as below
+    // TODO: Query cw4_group_addr to obtain list of members
     let members: MemberListResponse = deps.querier.query_wasm_smart(
         cw4_group_addr.clone(),
         &ListMembers {
-            start_after: None, // TODO: Check if Some() needed
-            limit: None,       // TODO: Check if Some() needed
+            start_after: None,
+            limit: None,
         },
     )?;
-    deps.api.debug(format!("members: {:?}", members).as_str());
 
     // As we are passing message_hash and signature tuples, we should be able to always recover the correct publicKey.
     // Given this assumption we should previously check what the majority says leveraging the clear message_hash.
@@ -299,8 +341,7 @@ pub fn execute_propose(
             .or_insert(0) += 1;
     }
 
-    deps.api
-        .debug(format!("message_hash_counts: {:?}", message_hash_counts).as_str());
+    // TODO: We need to take in account the .weight of a member, so we need to filter message_hash_majority based on this, and also avoid taking in account not recovering messages.
 
     // Get majority message count and throw error if we have a tie
     let message_hash_majority: Vec<u8> = if let Some(max_count) = message_hash_counts.values().max()
@@ -310,117 +351,49 @@ pub fn execute_propose(
             .filter(|&(_, &count)| count == *max_count)
             .map(|(hash, _)| hash.clone()) // Clone the Vec<u8> here
             .collect();
-        deps.api
-            .debug(format!("max_count_hashes: {:?}", max_count_hashes).as_str());
 
         if max_count_hashes.len() > 1 {
-            deps.api.debug("IF_1");
             // Handle the error case where there is a tie
             return Err(ContractError::ThresholdError(
                 ThresholdError::UnreachableThreshold {},
             ));
         } else {
-            deps.api.debug("ELSE_1");
             // Return message_hash_majority value
             max_count_hashes.into_iter().next().unwrap_or_default()
         }
     } else {
-        deps.api.debug("ELSE_2");
         // Handle the case where there are no votes
         return Err(ContractError::ThresholdError(
             ThresholdError::UnreachableThreshold {},
         ));
     };
-    deps.api
-        .debug(format!("CC >>> message_hash_majority: {:?}", message_hash_majority).as_str());
-    deps.api.debug("------------CC-------------");
 
     // Foreach signature (vote) received, compute vote and vote on proposal
     for vote_signature in &vote_signatures {
-        //let pubkey_result = deps.api.secp256k1_recover_pubkey(
-        //    &vote_signature.message_hash,
-         //   &vote_signature.signature,
-          //  1u8,
-        //);
-        let pubkey_result = deps.api.secp256k1_recover_pubkey(
-            &vote_signature.message_hash,
-            &vote_signature.signature,
-            1u8,
-        );
-        deps.api.debug(
-            format!(
-                "CC >>> pubkey_result: {:?} {:?}",
-                pubkey_result, vote_signature
-            )
-            .as_str(),
-        );
-
- let pubkey_slice = pubkey_result.as_ref().unwrap().as_slice();
-// Now you can use pubkey_slice, and pubkey_result remains valid for later use
-
-        let is_pubkey_ok = deps.api.secp256k1_verify(&vote_signature.message_hash,
-                                                     &vote_signature.signature,
-                                                     pubkey_slice);
-
-        let message = match is_pubkey_ok {
-            Ok(value) => format!("is_pubkey_ok: {}", value),
-            Err(e) => format!("Error checking pubkey: {:?}", e),
-        };
-        deps.api.debug(format!("pubkey_result: {:?} {:?}", pubkey_result, vote_signature).as_str());
-        deps.api.debug(format!("is_pubkey_ok: {:?}", message).as_str());
-       // let tmp = deps.api.VerifyingKey.from_sec1_bytes(pubkey.as_slice());
+        let mut pubkey_result = deps
+            .api
+            .secp256k1_recover_pubkey(&vote_signature.message_hash, &vote_signature.signature, 0u8)
+            .unwrap();
+        pubkey_result = compress_public_key(pubkey_result.as_slice()).unwrap();
+        let address = derive_addr_from_pubkey(pubkey_result.as_slice(), "osmo")?;
         let mut vote: Option<Vote> = None;
-        match pubkey_result {
-            Ok(pubkey) => {
-                //let address = pubkey_to_address(&pubkey);
-                let address = derive_addr_from_pubkey(pubkey.as_slice(), "osmo");
-                let address_str = address?.clone(); // handle the Result and clone the string if it's Ok
-                deps.api
-                    .debug(format!("DEBUG - address-1 {:?} ", address_str.as_str()).as_str());
-                //deps.api.debug(format!("DEBUG - address-1 {:?} address-2 {:?}",
-                //                      address.clone().as_str(),  address.clone().into_string() ).as_str());
-                if members
-                    .members
-                    .iter()
-                    .any(|member| member.addr == address_str)
-                {
-                    // Members has been found
-                    deps.api.debug(
-                        format!("DEBUG - Members has been found  {:?} ", address_str).as_str(),
-                    );
-                    // TODO: Compute yes or no vote based on majority previous computed.
-                    vote = Some(if vote_signature.message_hash == message_hash_majority {
-                        Vote::Yes
-                    } else {
-                        Vote::No
-                    });
 
-                    deps.api
-                        .debug(format!("DEBUG - Vote  {:?} ", vote).as_str());
-                } else {
-                    deps.api.debug(
-                        format!(
-                            "DEBUG - didn't recognize the address on members list  {:?} ",
-                            address_str
-                        )
-                        .as_str(),
-                    );
-                    // TODO: Skip this iteration and continue, as we didn't recognize the address on members list
-                }
-            }
-            Err(_) => {
-                // Handle error, log or push to invalid
-                deps.api.debug(
-                    format!("DEBUG - ERROR  {:?} {:?} ", vote_signature, pubkey_result).as_str(),
-                );
-            }
+        if members.members.iter().any(|member| member.addr == address) {
+            // Members has been found
+            // TODO: TAKE IN ACCOUNT VOTING WEIGHT! Compute yes or no vote based on majority previous computed.
+            vote = Some(if vote_signature.message_hash == message_hash_majority {
+                Vote::Yes
+            } else {
+                Vote::No
+            });
+        } else {
+            // Do nothing, skip this iteration and continue. We didn't recognize the address on members list.
+            continue; // TODO: Check if this should be an error
         }
 
         // Rationale (optional). TODO: Deprecate this or hardcode it to "".tostring()
         let rationale = Some("I'm voting because this is cool!".to_string());
 
-        deps.api
-            .debug(format!("DEBUG 4 {:?} {:?} {:?} ", vote_signature, vote, rationale).as_str());
         // Call proposal_vote only if vote_option is not None
         if let Some(vote) = vote {
             proposal_vote(
@@ -434,18 +407,8 @@ pub fn execute_propose(
         }
     }
 
-    deps.api.debug("DEBUG 5");
-    let status: Status = proposal.current_status(&env.block);
-    deps.api.debug(format!("Status: {:?}", status).as_str());
-    deps.api.debug("DEBUG 6");
-
-    // Update proposal status, to passed as sig verification and quorum is achieved.
-    proposal.status = Status::Passed;
-    PROPOSALS.save(deps.storage, id, &proposal)?;
-
-    // TODO: Implement proposal_execute()
+    // Execute the proposal
     proposal_execute(deps.branch(), env, info.clone(), id)?;
-    deps.api.debug("DEBUG 7");
 
     Ok(Response::default()
         .add_submessages(hooks)
@@ -453,22 +416,6 @@ pub fn execute_propose(
         .add_attribute("sender", info.sender)
         .add_attribute("proposal_id", id.to_string())
         .add_attribute("status", proposal.status.to_string()))
-}
-
-// TODO: Move this to helpers.rs
-pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
-    // derive external address for merkle proof check
-    let sha_hash: [u8; 32] = Sha256::digest(pub_key)
-        .as_slice()
-        .try_into()
-        .map_err(|_| ContractError::WrongLength {})?;
-
-    let rip_hash = Ripemd160::digest(sha_hash);
-    let rip_slice: &[u8] = rip_hash.as_slice();
-
-    let addr: String = bech32::encode(hrp, rip_slice.to_base32(), bech32::Variant::Bech32)
-        .map_err(|_| ContractError::VerificationFailed {})?;
-    Ok(addr)
 }
 
 // TODO: Move this to proposal.rs::impl block
@@ -480,14 +427,11 @@ fn proposal_vote(
     vote: Vote,
     rationale: Option<String>,
 ) -> Result<Response, ContractError> {
-    deps.api.debug("DEBUG - inside proposal_vote");
     let config = CONFIG.load(deps.storage)?;
     let mut prop = PROPOSALS
         .may_load(deps.storage, proposal_id)?
         .ok_or(ContractError::NoSuchProposal { id: proposal_id })?;
 
-    deps.api
-        .debug(format!("DEBUG - prop : {:?}", prop).as_str());
     // Allow voting on proposals until they expire.
     // Voting on a non-open proposal will never change
     // their outcome as if an outcome has been determined,
