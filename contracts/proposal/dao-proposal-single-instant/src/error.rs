@@ -89,4 +89,10 @@ pub enum ContractError {
 
     #[error("can not migrate. current version is up to date")]
     AlreadyMigrated {},
+
+    #[error("Wrong length")]
+    WrongLength {},
+
+    #[error("Verification failed")]
+    VerificationFailed {},
 }

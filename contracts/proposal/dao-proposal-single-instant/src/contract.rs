@@ -27,9 +27,8 @@ use dao_voting_cw4::msg::QueryMsg::GroupContract;
 use std::collections::HashMap;
 
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
-use crate::proposal::{next_proposal_id, SingleChoiceProposal};
+use crate::proposal::{next_proposal_id, SingleChoiceInstantPropose};
 use crate::state::{Config, VoteSignature, CREATION_POLICY};
-
 use crate::v1_state::{
     v1_duration_to_v2, v1_expiration_to_v2, v1_status_to_v2, v1_threshold_to_v2, v1_votes_to_v2,
 };
@@ -41,6 +40,10 @@ use crate::{
     query::{ProposalResponse, VoteInfo, VoteListResponse, VoteResponse},
     state::{Ballot, BALLOTS, CONFIG, PROPOSALS, PROPOSAL_COUNT, PROPOSAL_HOOKS, VOTE_HOOKS},
 };
+use bech32::ToBase32;
+use ripemd::{Digest as RipDigest, Ripemd160};
+use sha2::{Digest as ShaDigest, Sha256}; // TODO: CHeck which Digest is better to use
+use std::convert::TryInto;
 
 pub(crate) const CONTRACT_NAME: &str = "crates.io:dao-proposal-single-instant";
 pub(crate) const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -105,7 +108,16 @@ pub fn execute(
             msgs,
             proposer,
             vote_signatures,
-        }) => execute_propose(deps, env, info, title, description, msgs, proposer, vote_signatures),
+        }) => execute_propose(
+            deps,
+            env,
+            info,
+            title,
+            description,
+            msgs,
+            proposer,
+            vote_signatures,
+        ),
         ExecuteMsg::UpdateRationale {
             proposal_id,
             rationale,
@@ -144,6 +156,51 @@ pub fn execute(
             execute_remove_vote_hook(deps, env, info, address)
         }
     }
+}
+
+// fn compress_public_key(uncompressed_key: &[u8]) -> Option<Vec<u8>> {
+//     VerifyingKey::from_sec1_bytes(uncompressed_key).ok().map(|key| {
+//         EncodedPoint::from(key).compress().as_bytes().to_vec()
+//     })
+// }
+fn compress_public_key(pubkey_uncompressed: &[u8]) -> Option<Vec<u8>> {
+    if pubkey_uncompressed.len() != 65 || pubkey_uncompressed[0] != 0x04 {
+        // Invalid public key format
+        return None;
+    }
+
+    // Copy the x-coordinate
+    let x_coord = &pubkey_uncompressed[1..33];
+
+    // Determine the prefix based on the y-coordinate's last bit
+    let prefix = if pubkey_uncompressed.last()? & 1 == 0 {
+        0x02
+    } else {
+        0x03
+    };
+
+    // Create compressed public key
+    let mut pubkey_compressed = Vec::with_capacity(33);
+    pubkey_compressed.push(prefix);
+    pubkey_compressed.extend_from_slice(x_coord);
+
+    Some(pubkey_compressed)
+}
+
+// TODO: Move this to helpers.rs
+pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
+    // derive external address for merkle proof check
+    let sha_hash: [u8; 32] = Sha256::digest(pub_key)
+        .as_slice()
+        .try_into()
+        .map_err(|_| ContractError::WrongLength {})?;
+
+    let rip_hash = Ripemd160::digest(sha_hash);
+    let rip_slice: &[u8] = rip_hash.as_slice();
+
+    let addr: String = bech32::encode(hrp, rip_slice.to_base32(), bech32::Variant::Bech32)
+        .map_err(|_| ContractError::VerificationFailed {})?;
+    Ok(addr)
 }
 
 pub fn execute_propose(
@@ -204,7 +261,7 @@ pub fn execute_propose(
 
     let proposal = {
         // Limit mutability to this block.
-        let mut proposal = SingleChoiceProposal {
+        let mut proposal = SingleChoiceInstantPropose {
             title,
             description,
             proposer: proposer.clone(),
@@ -265,15 +322,14 @@ pub fn execute_propose(
         .querier
         .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
 
-    // TODO: Query the cw4 as below
+    // TODO: Query cw4_group_addr to obtain list of members
     let members: MemberListResponse = deps.querier.query_wasm_smart(
         cw4_group_addr.clone(),
         &ListMembers {
-            start_after: None, // TODO: Check if Some() needed
-            limit: None,       // TODO: Check if Some() needed
+            start_after: None,
+            limit: None,
         },
     )?;
-    deps.api.debug(format!("members: {:?}", members).as_str());
 
     // As we are passing message_hash and signature tuples, we should be able to always recover the correct publicKey.
     // Given this assumption we should previously check what the majority says leveraging the clear message_hash.
@@ -285,7 +341,7 @@ pub fn execute_propose(
             .or_insert(0) += 1;
     }
 
-    deps.api.debug(format!("message_hash_counts: {:?}", message_hash_counts).as_str());
+    // TODO: We need to take in account the .weight of a member, so we need to filter message_hash_majority based on this, and also avoid taking in account not recovering messages.
 
     // Get majority message count and throw error if we have a tie
     let message_hash_majority: Vec<u8> = if let Some(max_count) = message_hash_counts.values().max()
@@ -295,62 +351,49 @@ pub fn execute_propose(
             .filter(|&(_, &count)| count == *max_count)
             .map(|(hash, _)| hash.clone()) // Clone the Vec<u8> here
             .collect();
-        deps.api.debug(format!("max_count_hashes: {:?}", max_count_hashes).as_str());
 
         if max_count_hashes.len() > 1 {
-            deps.api.debug("IF_1");
             // Handle the error case where there is a tie
             return Err(ContractError::ThresholdError(
                 ThresholdError::UnreachableThreshold {},
             ));
         } else {
-            deps.api.debug("ELSE_1");
             // Return message_hash_majority value
             max_count_hashes.into_iter().next().unwrap_or_default()
         }
     } else {
-        deps.api.debug("ELSE_2");
         // Handle the case where there are no votes
         return Err(ContractError::ThresholdError(
             ThresholdError::UnreachableThreshold {},
         ));
     };
-    deps.api.debug(format!("message_hash_majority: {:?}", message_hash_majority).as_str());
 
     // Foreach signature (vote) received, compute vote and vote on proposal
     for vote_signature in &vote_signatures {
-        let pubkey_result = deps.api.secp256k1_recover_pubkey(
-            &vote_signature.message_hash,
-            &vote_signature.signature,
-            1u8,
-        );
-
+        let mut pubkey_result = deps
+            .api
+            .secp256k1_recover_pubkey(&vote_signature.message_hash, &vote_signature.signature, 0u8)
+            .unwrap();
+        pubkey_result = compress_public_key(pubkey_result.as_slice()).unwrap();
+        let address = derive_addr_from_pubkey(pubkey_result.as_slice(), "osmo")?;
         let mut vote: Option<Vote> = None;
-        match pubkey_result {
-            Ok(pubkey) => {
-                let address = pubkey_to_address(&pubkey);
 
-                if members.members.iter().any(|member| member.addr == address) {
-                    // Members has been found
-                    // TODO: Compute yes or no vote based on majority previous computed.
-                    vote = Some(if vote_signature.message_hash == message_hash_majority {
-                        Vote::Yes
-                    } else {
-                        Vote::No
-                    });
-                } else {
-                    // TODO: Skip this iteration and continue, as we didn't recognize the address on members list
-                }
-            }
-            Err(_) => {
-                // Handle error, log or push to invalid
-            }
+        if members.members.iter().any(|member| member.addr == address) {
+            // Members has been found
+            // TODO: TAKE IN ACCOUNT VOTING WEIGHT! Compute yes or no vote based on majority previous computed.
+            vote = Some(if vote_signature.message_hash == message_hash_majority {
+                Vote::Yes
+            } else {
+                Vote::No
+            });
+        } else {
+            // Do nothing, skip this iteration and continue. We didn't recognize the address on members list.
+            continue; // TODO: Check if this should be an error
         }
 
         // Rationale (optional). TODO: Deprecate this or hardcode it to "".tostring()
         let rationale = Some("I'm voting because this is cool!".to_string());
 
-        deps.api.debug("DEBUG 4");
         // Call proposal_vote only if vote_option is not None
         if let Some(vote) = vote {
             proposal_vote(
@@ -363,11 +406,9 @@ pub fn execute_propose(
             )?;
         }
     }
-    deps.api.debug("DEBUG 5");
 
-    // TODO: Implement proposal_execute()
+    // Execute the proposal
     proposal_execute(deps.branch(), env, info.clone(), id)?;
-    deps.api.debug("DEBUG 6");
 
     Ok(Response::default()
         .add_submessages(hooks)
@@ -375,11 +416,6 @@ pub fn execute_propose(
         .add_attribute("sender", info.sender)
         .add_attribute("proposal_id", id.to_string())
         .add_attribute("status", proposal.status.to_string()))
-}
-
-// TODO: Move this to helpers.rs
-fn pubkey_to_address(pubkey: &[u8]) -> Addr {
-    Addr::unchecked(String::from_utf8_lossy(pubkey).to_string())
 }
 
 // TODO: Move this to proposal.rs::impl block
@@ -896,7 +932,7 @@ pub fn query_list_proposals(
     let props: Vec<ProposalResponse> = PROPOSALS
         .range(deps.storage, min, None, cosmwasm_std::Order::Ascending)
         .take(limit as usize)
-        .collect::<Result<Vec<(u64, SingleChoiceProposal)>, _>>()?
+        .collect::<Result<Vec<(u64, SingleChoiceInstantPropose)>, _>>()?
         .into_iter()
         .map(|(id, proposal)| proposal.into_response(&env.block, id))
         .collect();
@@ -915,7 +951,7 @@ pub fn query_reverse_proposals(
     let props: Vec<ProposalResponse> = PROPOSALS
         .range(deps.storage, None, max, cosmwasm_std::Order::Descending)
         .take(limit as usize)
-        .collect::<Result<Vec<(u64, SingleChoiceProposal)>, _>>()?
+        .collect::<Result<Vec<(u64, SingleChoiceInstantPropose)>, _>>()?
         .into_iter()
         .map(|(id, proposal)| proposal.into_response(&env.block, id))
         .collect();
@@ -1041,7 +1077,7 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, Co
                         return Err(ContractError::PendingProposals {});
                     }
 
-                    let migrated_proposal = SingleChoiceProposal {
+                    let migrated_proposal = SingleChoiceInstantPropose {
                         title: prop.title,
                         description: prop.description,
                         proposer: prop.proposer,

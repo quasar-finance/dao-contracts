@@ -8,7 +8,7 @@ use dao_voting::threshold::{PercentageThreshold, Threshold};
 use dao_voting::voting::{does_vote_count_fail, does_vote_count_pass, Votes};
 
 #[cw_serde]
-pub struct SingleChoiceProposal {
+pub struct SingleChoiceInstantPropose {
     pub title: String,
     pub description: String,
     /// The address that created this proposal.
@@ -46,7 +46,7 @@ pub fn advance_proposal_id(store: &mut dyn Storage) -> StdResult<u64> {
     Ok(id)
 }
 
-impl SingleChoiceProposal {
+impl SingleChoiceInstantPropose {
     /// Consumes the proposal and returns a version which may be used
     /// in a query response. Why is this necessary? Proposal
     /// statuses are only updated on vote, execute, and close
@@ -253,7 +253,7 @@ mod test {
         is_expired: bool,
         min_voting_period_elapsed: bool,
         allow_revoting: bool,
-    ) -> (SingleChoiceProposal, BlockInfo) {
+    ) -> (SingleChoiceInstantPropose, BlockInfo) {
         let block = mock_env().block;
         let expiration = match is_expired {
             true => Expiration::AtHeight(block.height - 5),
@@ -264,7 +264,7 @@ mod test {
             false => Expiration::AtHeight(block.height + 5),
         };
 
-        let prop = SingleChoiceProposal {
+        let prop = SingleChoiceInstantPropose {
             title: "Demo".to_string(),
             description: "Info".to_string(),
             proposer: Addr::unchecked("test"),

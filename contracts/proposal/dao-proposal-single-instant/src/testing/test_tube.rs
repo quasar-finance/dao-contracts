@@ -1,8 +1,6 @@
 #[cfg(test)]
-pub mod test_tube {
-    use std::collections::HashMap;
-    use std::path::PathBuf;
 
+pub mod test_tube {
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::{to_binary, Coin, Uint128};
@@ -15,6 +13,9 @@ pub mod test_tube {
     use dao_voting_cw4::msg::GroupContract;
     use osmosis_test_tube::Account;
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
+    use sha2::{Digest, Sha256};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
 
     /// Init constants
     const SLUG_DAO_DAO_CORE: &str = "dao_dao_core";
@@ -37,12 +38,13 @@ pub mod test_tube {
         let app = OsmosisTestApp::new();
         let wasm = Wasm::new(&app);
 
-        // Create new account with initial funds
+        // Create new admin account with initial funds
+        // The contract admin, to be used during store code.
         let admin: SigningAccount = app
             .init_account(&[Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo")])
             .unwrap();
 
-        // Create voters accounts
+        // Create voters accounts with initial funds
         let mut voters: Vec<SigningAccount> = vec![];
         for _ in 0..voters_number {
             voters.push(
@@ -89,7 +91,6 @@ pub mod test_tube {
                 (contract_name, code_id)
             })
             .collect();
-
         // TODO: Instantiate msgs defined here -> https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
 
         // Instantiate contract and sub-contracts in once
@@ -178,8 +179,6 @@ pub mod test_tube {
             }
         }
 
-        // TODO: Assert contracts keys are existing
-
         (app, contracts, admin, voters)
     }
 
@@ -208,21 +207,30 @@ pub mod test_tube {
         }
     }
 
+    // Function to compute SHA256 hash of a message
+    pub fn compute_sha256_hash(message: &[u8]) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        hasher.update(message);
+        hasher.finalize().to_vec()
+    }
+
     #[test]
     #[ignore]
     fn test_dao_proposal_single_instant() {
-        let (app, contracts, admin, voters) = test_init(3);
+        let (app, contracts, admin, voters) = test_init(1);
         let wasm = Wasm::new(&app);
 
         // TODO: Mock signatures taking voter.publickey to recover the sig
         let mut vote_signatures: Vec<VoteSignature> = vec![];
         for voter in voters {
-            // Dummy message
-            let msg: &[u8] = "Hello World!".as_bytes();
+            let clear_message = b"Hello World!";
+            let message_hash = compute_sha256_hash(clear_message);
+            let signature = voter.signing_key().sign(clear_message).unwrap();
+
             // VoteSignature
             vote_signatures.push(VoteSignature {
-                message_hash: msg.to_vec(),
-                signature: voter.signing_key().sign(msg).unwrap().as_ref().to_vec(),
+                message_hash,
+                signature: signature.as_ref().to_vec(),
             })
         }
 
@@ -246,7 +254,6 @@ pub mod test_tube {
                 &admin,
             )
             .unwrap();
-        println!("execute_propose_resp: {:?}", execute_propose_resp);
 
         // TODO: Assert Admin balance after = (before + transfer_amount)
 
