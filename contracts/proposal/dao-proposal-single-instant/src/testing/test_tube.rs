@@ -1,5 +1,4 @@
 #[cfg(test)]
-
 pub mod test_tube {
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;

@@ -1,3 +1,18 @@
+use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
+use crate::proposal::{next_proposal_id, SingleChoiceInstantPropose};
+use crate::state::{Config, VoteSignature, CREATION_POLICY};
+use crate::v1_state::{
+    v1_duration_to_v2, v1_expiration_to_v2, v1_status_to_v2, v1_threshold_to_v2, v1_votes_to_v2,
+};
+use crate::{
+    error::ContractError,
+    msg::{ExecuteMsg, InstantiateMsg, QueryMsg},
+    proposal::advance_proposal_id,
+    query::ProposalListResponse,
+    query::{ProposalResponse, VoteInfo, VoteListResponse, VoteResponse},
+    state::{Ballot, BALLOTS, CONFIG, PROPOSALS, PROPOSAL_COUNT, PROPOSAL_HOOKS, VOTE_HOOKS},
+};
+use bech32::ToBase32;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
@@ -24,25 +39,9 @@ use dao_voting::status::Status;
 use dao_voting::threshold::{Threshold, ThresholdError};
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
 use dao_voting_cw4::msg::QueryMsg::GroupContract;
+use ripemd::{Digest as RipDigest, Ripemd160}; // TODO: Replace this with sha2::Digest and adapt dependant functions
+use sha2::Sha256;
 use std::collections::HashMap;
-
-use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
-use crate::proposal::{next_proposal_id, SingleChoiceInstantPropose};
-use crate::state::{Config, VoteSignature, CREATION_POLICY};
-use crate::v1_state::{
-    v1_duration_to_v2, v1_expiration_to_v2, v1_status_to_v2, v1_threshold_to_v2, v1_votes_to_v2,
-};
-use crate::{
-    error::ContractError,
-    msg::{ExecuteMsg, InstantiateMsg, QueryMsg},
-    proposal::advance_proposal_id,
-    query::ProposalListResponse,
-    query::{ProposalResponse, VoteInfo, VoteListResponse, VoteResponse},
-    state::{Ballot, BALLOTS, CONFIG, PROPOSALS, PROPOSAL_COUNT, PROPOSAL_HOOKS, VOTE_HOOKS},
-};
-use bech32::ToBase32;
-use ripemd::{Digest as RipDigest, Ripemd160};
-use sha2::{Digest as ShaDigest, Sha256}; // TODO: CHeck which Digest is better to use
 use std::convert::TryInto;
 
 pub(crate) const CONTRACT_NAME: &str = "crates.io:dao-proposal-single-instant";
@@ -156,51 +155,6 @@ pub fn execute(
             execute_remove_vote_hook(deps, env, info, address)
         }
     }
-}
-
-// fn compress_public_key(uncompressed_key: &[u8]) -> Option<Vec<u8>> {
-//     VerifyingKey::from_sec1_bytes(uncompressed_key).ok().map(|key| {
-//         EncodedPoint::from(key).compress().as_bytes().to_vec()
-//     })
-// }
-fn compress_public_key(pubkey_uncompressed: &[u8]) -> Option<Vec<u8>> {
-    if pubkey_uncompressed.len() != 65 || pubkey_uncompressed[0] != 0x04 {
-        // Invalid public key format
-        return None;
-    }
-
-    // Copy the x-coordinate
-    let x_coord = &pubkey_uncompressed[1..33];
-
-    // Determine the prefix based on the y-coordinate's last bit
-    let prefix = if pubkey_uncompressed.last()? & 1 == 0 {
-        0x02
-    } else {
-        0x03
-    };
-
-    // Create compressed public key
-    let mut pubkey_compressed = Vec::with_capacity(33);
-    pubkey_compressed.push(prefix);
-    pubkey_compressed.extend_from_slice(x_coord);
-
-    Some(pubkey_compressed)
-}
-
-// TODO: Move this to helpers.rs
-pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
-    // derive external address for merkle proof check
-    let sha_hash: [u8; 32] = Sha256::digest(pub_key)
-        .as_slice()
-        .try_into()
-        .map_err(|_| ContractError::WrongLength {})?;
-
-    let rip_hash = Ripemd160::digest(sha_hash);
-    let rip_slice: &[u8] = rip_hash.as_slice();
-
-    let addr: String = bech32::encode(hrp, rip_slice.to_base32(), bech32::Variant::Bech32)
-        .map_err(|_| ContractError::VerificationFailed {})?;
-    Ok(addr)
 }
 
 pub fn execute_propose(
@@ -418,7 +372,52 @@ pub fn execute_propose(
         .add_attribute("status", proposal.status.to_string()))
 }
 
-// TODO: Move this to proposal.rs::impl block
+// TODO: Find a better place for this method which is an helper function. Also try to use a streamlined approach as the commented instead of inlining it.
+// fn compress_public_key(uncompressed_key: &[u8]) -> Option<Vec<u8>> {
+//     VerifyingKey::from_sec1_bytes(uncompressed_key).ok().map(|key| {
+//         EncodedPoint::from(key).compress().as_bytes().to_vec()
+//     })
+// }
+fn compress_public_key(pubkey_uncompressed: &[u8]) -> Option<Vec<u8>> {
+    if pubkey_uncompressed.len() != 65 || pubkey_uncompressed[0] != 0x04 {
+        // Invalid public key format
+        return None;
+    }
+
+    // Copy the x-coordinate
+    let x_coord = &pubkey_uncompressed[1..33];
+
+    // Determine the prefix based on the y-coordinate's last bit
+    let prefix = if pubkey_uncompressed.last()? & 1 == 0 {
+        0x02
+    } else {
+        0x03
+    };
+
+    // Create compressed public key
+    let mut pubkey_compressed = Vec::with_capacity(33);
+    pubkey_compressed.push(prefix);
+    pubkey_compressed.extend_from_slice(x_coord);
+
+    Some(pubkey_compressed)
+}
+
+// TODO: Find a better place for this method which is an helper function.
+fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
+    let sha_hash: [u8; 32] = Sha256::digest(pub_key)
+        .as_slice()
+        .try_into()
+        .map_err(|_| ContractError::WrongLength {})?;
+
+    let rip_hash = Ripemd160::digest(sha_hash);
+    let rip_slice: &[u8] = rip_hash.as_slice();
+
+    let addr: String = bech32::encode(hrp, rip_slice.to_base32(), bech32::Variant::Bech32)
+        .map_err(|_| ContractError::VerificationFailed {})?;
+    Ok(addr)
+}
+
+// TODO: Find a better place for this method that has been downcasted from entrypoint to private method.
 fn proposal_vote(
     deps: DepsMut,
     env: Env,
@@ -521,7 +520,7 @@ fn proposal_vote(
         .add_attribute("status", prop.status.to_string()))
 }
 
-// TODO: Move this to proposal.rs::impl block
+// TODO: Find a better place for this method that has been downcasted from entrypoint to private method.
 fn proposal_execute(
     deps: DepsMut,
     env: Env,
