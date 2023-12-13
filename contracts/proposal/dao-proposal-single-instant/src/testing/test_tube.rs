@@ -1,10 +1,10 @@
 #[cfg(test)]
 pub mod test_tube {
-    use crate::contract::{derive_addr_from_pubkey, compress_public_key};
+    use crate::contract::{compress_public_key, derive_addr_from_pubkey};
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::testing::mock_dependencies;
-    use cosmwasm_std::{to_binary, Coin, Uint128, Api};
+    use cosmwasm_std::{to_binary, Api, Coin, Uint128};
     use cw_utils::Duration;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
     use dao_interface::state::Admin;
@@ -269,7 +269,7 @@ pub mod test_tube {
 
     #[test]
     #[ignore]
-    fn test_secp_sig_3() {
+    fn test_secp256k1_recover_pubkey() {
         let (_app, _contracts, _admin, voters) = test_init(1);
         let deps = mock_dependencies();
 
@@ -283,24 +283,21 @@ pub mod test_tube {
             // Ref for message sample data,
             // https://gist.github.com/webmaster128/130b628d83621a33579751846699ed15
 
-            let msg = b"Hello World";
-            let hash_result = compute_sha256_hash(msg);
+            let clear_message = b"Hello World";
+            let hash_result = compute_sha256_hash(clear_message);
+            let signature = voter.signing_key().sign(clear_message).unwrap();
 
-            let signature = voter
-                .signing_key()
-                //.sign(hash_result.as_bytes())
-                .sign(hash_result.as_slice())
-                .expect("Failed to sign hash")
-                .to_vec();
-
-            let mut recovered_pubkey = deps.api.secp256k1_recover_pubkey(
-                    hash_result.as_slice(),
-                    &signature, 0u8)
+            let mut recovered_pubkey = deps
+                .api
+                .secp256k1_recover_pubkey(hash_result.as_slice(), signature.as_ref(), 0u8)
                 .expect("Failed to recover public key");
             recovered_pubkey = compress_public_key(recovered_pubkey.as_slice()).unwrap();
 
             println!("Recovered Public Key: {:?}", recovered_pubkey);
-            println!("Recovered Address: {:?}", derive_addr_from_pubkey(&recovered_pubkey, "osmo"));
+            println!(
+                "Recovered Address: {:?}",
+                derive_addr_from_pubkey(&recovered_pubkey, "osmo")
+            );
 
             assert_eq!(recovered_pubkey.as_slice(), pub_key.to_bytes());
         }
