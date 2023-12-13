@@ -184,7 +184,7 @@ pub mod test_tube {
         println!("block_height_before: {:?}", app.get_block_height());
         app.increase_time(60);
         println!("block_height_after: {:?}", app.get_block_height());
-        
+
         (app, contracts, admin, voters)
     }
 
@@ -230,10 +230,7 @@ pub mod test_tube {
         let mut vote_signatures: Vec<VoteSignature> = vec![];
         for voter in voters {
             println!("address before: {:?}", voter.address());
-            println!(
-                "pubkey before: {:?}",
-                voter.public_key().to_bytes()
-            );
+            println!("pubkey before: {:?}", voter.public_key().to_bytes());
             let clear_message = b"Hello World!";
             let message_hash = compute_sha256_hash(clear_message);
             let signature = voter.signing_key().sign(clear_message).unwrap();
@@ -242,7 +239,7 @@ pub mod test_tube {
             vote_signatures.push(VoteSignature {
                 message_hash,
                 signature: signature.as_ref().to_vec(),
-                public_key: voter.public_key().to_bytes()
+                public_key: voter.public_key().to_bytes(),
             })
         }
 

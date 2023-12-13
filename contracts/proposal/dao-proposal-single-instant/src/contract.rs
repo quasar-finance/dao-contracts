@@ -323,13 +323,26 @@ pub fn execute_propose(
             ThresholdError::UnreachableThreshold {},
         ));
     };
-    deps.api.debug(format!("DEBUG 2: message_hash_majority: {:?}", message_hash_majority).as_str());
+    deps.api.debug(
+        format!(
+            "DEBUG 2: message_hash_majority: {:?}",
+            message_hash_majority
+        )
+        .as_str(),
+    );
 
     // Foreach signature (vote) received, compute vote and vote on proposal
     for vote_signature in &vote_signatures {
         // Verify or throw error
         // TODO: avoid throwing error so we can just ignore this and continue;
-        let verified = deps.api.secp256k1_verify(vote_signature.message_hash.as_slice(), vote_signature.signature.as_slice(), vote_signature.public_key.as_slice()).unwrap();
+        let verified = deps
+            .api
+            .secp256k1_verify(
+                vote_signature.message_hash.as_slice(),
+                vote_signature.signature.as_slice(),
+                vote_signature.public_key.as_slice(),
+            )
+            .unwrap();
         let address = derive_addr_from_pubkey(vote_signature.public_key.as_slice(), "osmo")?;
 
         let mut vote: Option<Vote> = None;
