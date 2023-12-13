@@ -22,6 +22,7 @@ integration-test: deploy-local workspace-optimize
 test-tube:
     cargo test --features "test-tube"
 
+# TODO move this inside contract config/.cargo file
 test-tube-proposal-single-instant:
     cargo test --package dao-proposal-single-instant --lib -- --include-ignored testing::test_tube --nocapture --test-threads=1
 
