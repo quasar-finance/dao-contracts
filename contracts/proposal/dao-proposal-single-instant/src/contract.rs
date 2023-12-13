@@ -13,6 +13,9 @@ use crate::{
     state::{Ballot, BALLOTS, CONFIG, PROPOSALS, PROPOSAL_COUNT, PROPOSAL_HOOKS, VOTE_HOOKS},
 };
 use bech32::ToBase32;
+use cosmrs::bip32::secp256k1::elliptic_curve::sec1::ToEncodedPoint;
+use cosmrs::bip32::secp256k1::elliptic_curve::PublicKey;
+use cosmrs::bip32::secp256k1::Secp256k1;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
@@ -330,6 +333,11 @@ pub fn execute_propose(
             .unwrap();
         pubkey_result = compress_public_key(pubkey_result.as_slice()).unwrap();
         let address = derive_addr_from_pubkey(pubkey_result.as_slice(), "osmo")?;
+        deps.api
+            .debug(format!("address after: {:?}", address).as_str());
+        deps.api
+            .debug(format!("pubkey after: {:?}", pubkey_result).as_str());
+
         let mut vote: Option<Vote> = None;
 
         if members.members.iter().any(|member| member.addr == address) {
@@ -374,36 +382,46 @@ pub fn execute_propose(
 
 // TODO: Find a better place for this method which is an helper function. Also try to use a streamlined approach as the commented instead of inlining it.
 // fn compress_public_key(uncompressed_key: &[u8]) -> Option<Vec<u8>> {
-//     VerifyingKey::from_sec1_bytes(uncompressed_key).ok().map(|key| {
+//     VerifyingKey::from_bytes(uncompressed_key).ok().map(|key| {
 //         EncodedPoint::from(key).compress().as_bytes().to_vec()
 //     })
 // }
-fn compress_public_key(pubkey_uncompressed: &[u8]) -> Option<Vec<u8>> {
-    if pubkey_uncompressed.len() != 65 || pubkey_uncompressed[0] != 0x04 {
-        // Invalid public key format
-        return None;
-    }
+// fn compress_public_key(pubkey_uncompressed: &[u8]) -> Option<Vec<u8>> {
+//     if pubkey_uncompressed.len() != 65 || pubkey_uncompressed[0] != 0x04 {
+//         // Invalid public key format
+//         return None;
+//     }
 
-    // Copy the x-coordinate
-    let x_coord = &pubkey_uncompressed[1..33];
+//     // Copy the x-coordinate
+//     let x_coord = &pubkey_uncompressed[1..33];
 
-    // Determine the prefix based on the y-coordinate's last bit
-    let prefix = if pubkey_uncompressed.last()? & 1 == 0 {
-        0x02
-    } else {
-        0x03
-    };
+//     // Determine the prefix based on the y-coordinate's last bit
+//     let prefix = if pubkey_uncompressed.last()? & 1 == 0 {
+//         0x02
+//     } else {
+//         0x03
+//     };
 
-    // Create compressed public key
-    let mut pubkey_compressed = Vec::with_capacity(33);
-    pubkey_compressed.push(prefix);
-    pubkey_compressed.extend_from_slice(x_coord);
+//     // Create compressed public key
+//     let mut pubkey_compressed = Vec::with_capacity(33);
+//     pubkey_compressed.push(prefix);
+//     pubkey_compressed.extend_from_slice(x_coord);
 
-    Some(pubkey_compressed)
+//     Some(pubkey_compressed)
+// }
+pub fn compress_public_key(uncompressed_key: &[u8]) -> Option<Vec<u8>> {
+    // Parse the uncompressed public key
+    let pubkey: PublicKey<Secp256k1> = PublicKey::from_sec1_bytes(uncompressed_key).ok()?;
+
+    // Serialize the public key to a compressed format
+    let pubkey_compressed = pubkey.to_encoded_point(true); // true for compressed format
+
+    // Convert to a byte vector
+    Some(pubkey_compressed.as_bytes().to_vec())
 }
 
 // TODO: Find a better place for this method which is an helper function.
-fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
+pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
     let sha_hash: [u8; 32] = Sha256::digest(pub_key)
         .as_slice()
         .try_into()
