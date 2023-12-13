@@ -41,9 +41,9 @@ cw-proposal-single-v1 = { workspace = true, features = ["library"] }
 sha2 = { version = "0.10.7", features = [] }
 ripemd = "0.1.1" # this could be deprecated by using sha2 only
 bech32 = "0.9.0"
-cosmrs = { workspace = true }
 
 [dev-dependencies]
+cosmrs = { workspace = true }
 cosmwasm-schema = { workspace = true }
 cw-multi-test = { workspace = true }
 dao-dao-core = { workspace = true }

@@ -275,10 +275,8 @@ pub mod test_tube {
 
         for voter in voters {
             let pub_key = voter.public_key();
-            let pub_key2 = voter.signing_key().public_key();
 
             println!("Voter Public Key: {:?}", pub_key);
-            println!("Voter Public Key2: {:?}", pub_key2);
             println!("Public Key Bytes: {:?}", pub_key.to_bytes());
             println!("Public Key Address: {:?}", voter.address());
 
@@ -304,7 +302,7 @@ pub mod test_tube {
             println!("Recovered Public Key: {:?}", recovered_pubkey);
             println!("Recovered Address: {:?}", derive_addr_from_pubkey(&recovered_pubkey, "osmo"));
 
-            //assert_eq!(recovered_pubkey, pub_key);
+            assert_eq!(recovered_pubkey.as_slice(), pub_key.to_bytes());
         }
     }
 }
