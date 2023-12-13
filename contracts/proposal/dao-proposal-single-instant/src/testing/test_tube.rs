@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod test_tube {
-    use crate::contract::{compress_public_key, derive_addr_from_pubkey};
+    use crate::contract::derive_addr_from_pubkey;
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::testing::mock_dependencies;
@@ -275,6 +275,8 @@ pub mod test_tube {
     #[test]
     #[ignore]
     fn test_secp256k1_recover_pubkey() {
+        //TODO: Adapt this test to be working with the verify
+
         let (_app, _contracts, _admin, voters) = test_init(1);
         let deps = mock_dependencies();
 
@@ -292,11 +294,10 @@ pub mod test_tube {
             let hash_result = compute_sha256_hash(clear_message);
             let signature = voter.signing_key().sign(clear_message).unwrap();
 
-            let mut recovered_pubkey = deps
+            let recovered_pubkey = deps
                 .api
                 .secp256k1_recover_pubkey(hash_result.as_slice(), signature.as_ref(), 0u8)
                 .expect("Failed to recover public key");
-            recovered_pubkey = compress_public_key(recovered_pubkey.as_slice()).unwrap();
 
             println!("Recovered Public Key: {:?}", recovered_pubkey);
             println!(

@@ -378,50 +378,6 @@ pub fn execute_propose(
 }
 
 // TODO: Find a better place for this method which is an helper function.
-// Also try to use a streamlined approach as the commented instead of inlining it.
-
-// pub fn compress_public_key(uncompressed_key: &[u8]) -> Option<Vec<u8>> {
-//     VerifyingKey::from_bytes(uncompressed_key).ok().map(|key| {
-//         EncodedPoint::from(key).compress().as_bytes().to_vec()
-//     })
-// }
-
-// pub fn compress_public_key(uncompressed_key: &[u8]) -> Option<Vec<u8>> {
-//     // Parse the uncompressed public key
-//     let pubkey: PublicKey<Secp256k1> = PublicKey::from_sec1_bytes(uncompressed_key).ok()?;
-
-//     // Serialize the public key to a compressed format
-//     let pubkey_compressed = pubkey.to_encoded_point(true); // true for compressed format
-
-//     // Convert to a byte vector
-//     Some(pubkey_compressed.as_bytes().to_vec())
-// }
-
-pub fn compress_public_key(pubkey_uncompressed: &[u8]) -> Option<Vec<u8>> {
-    if pubkey_uncompressed.len() != 65 || pubkey_uncompressed[0] != 0x04 {
-        // Invalid public key format
-        return None;
-    }
-
-    // Copy the x-coordinate
-    let x_coord = &pubkey_uncompressed[1..33];
-
-    // Determine the prefix based on the y-coordinate's last bit
-    let prefix = if pubkey_uncompressed.last()? & 1 == 0 {
-        0x02
-    } else {
-        0x03
-    };
-
-    // Create compressed public key
-    let mut pubkey_compressed = Vec::with_capacity(33);
-    pubkey_compressed.push(prefix);
-    pubkey_compressed.extend_from_slice(x_coord);
-
-    Some(pubkey_compressed)
-}
-
-// TODO: Find a better place for this method which is an helper function.
 pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
     let sha_hash: [u8; 32] = Sha256::digest(pub_key)
         .as_slice()
