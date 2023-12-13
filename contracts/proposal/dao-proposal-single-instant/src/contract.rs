@@ -289,6 +289,8 @@ pub fn execute_propose(
     // Given this assumption we should previously check what the majority says leveraging the clear message_hash.
     let mut message_hash_counts: HashMap<Vec<u8>, u32> = HashMap::new();
 
+    // TODO: START - We should iterate just one time vote_signatures to be able applying voting power to message_hash_majority. Double check.
+
     for vote_signature in &vote_signatures {
         *message_hash_counts
             .entry(vote_signature.message_hash.clone())
@@ -321,23 +323,17 @@ pub fn execute_propose(
             ThresholdError::UnreachableThreshold {},
         ));
     };
+    deps.api.debug(format!("DEBUG 2: message_hash_majority: {:?}", message_hash_majority).as_str());
 
     // Foreach signature (vote) received, compute vote and vote on proposal
     for vote_signature in &vote_signatures {
-        let mut pubkey_result = deps
-            .api
-            .secp256k1_recover_pubkey(&vote_signature.message_hash, &vote_signature.signature, 0u8)
-            .unwrap();
-        pubkey_result = compress_public_key(pubkey_result.as_slice()).unwrap();
-        let address = derive_addr_from_pubkey(pubkey_result.as_slice(), "osmo")?;
-        deps.api
-            .debug(format!("address after: {:?}", address).as_str());
-        deps.api
-            .debug(format!("pubkey after: {:?}", pubkey_result).as_str());
+        // Verify or throw error
+        // TODO: avoid throwing error so we can just ignore this and continue;
+        let verified = deps.api.secp256k1_verify(vote_signature.message_hash.as_slice(), vote_signature.signature.as_slice(), vote_signature.public_key.as_slice()).unwrap();
+        let address = derive_addr_from_pubkey(vote_signature.public_key.as_slice(), "osmo")?;
 
         let mut vote: Option<Vote> = None;
-
-        if members.members.iter().any(|member| member.addr == address) {
+        if verified && members.members.iter().any(|member| member.addr == address) {
             // Members has been found
             // TODO: TAKE IN ACCOUNT VOTING WEIGHT! Compute yes or no vote based on majority previous computed.
             vote = Some(if vote_signature.message_hash == message_hash_majority {
@@ -355,6 +351,7 @@ pub fn execute_propose(
 
         // Call proposal_vote only if vote_option is not None
         if let Some(vote) = vote {
+            deps.api.debug("DEBUG 3: Voting");
             proposal_vote(
                 deps.branch(),
                 env.clone(),
@@ -365,6 +362,9 @@ pub fn execute_propose(
             )?;
         }
     }
+    deps.api.debug("DEBUG 4");
+
+    // TODO: END
 
     // Execute the proposal
     proposal_execute(deps.branch(), env, info.clone(), id)?;

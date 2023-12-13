@@ -130,7 +130,7 @@ pub mod test_tube {
                             //     quorum: PercentageThreshold,
                             // },
                             // max_voting_period: Duration::Time(0), // 0 seconds
-                            max_voting_period: Duration::Height(0), // 0 blocks
+                            max_voting_period: Duration::Height(1), // 0 blocks
                             min_voting_period: None,
                             only_members_execute: false, // TODO
                             allow_revoting: false,
@@ -181,6 +181,10 @@ pub mod test_tube {
         }
         // TODO: Assert that we have the required n. of contracts here, as the ^ nested for match could fail
 
+        println!("block_height_before: {:?}", app.get_block_height());
+        app.increase_time(60);
+        println!("block_height_after: {:?}", app.get_block_height());
+        
         (app, contracts, admin, voters)
     }
 
@@ -228,7 +232,7 @@ pub mod test_tube {
             println!("address before: {:?}", voter.address());
             println!(
                 "pubkey before: {:?}",
-                voter.signing_key().public_key().to_bytes()
+                voter.public_key().to_bytes()
             );
             let clear_message = b"Hello World!";
             let message_hash = compute_sha256_hash(clear_message);
@@ -238,6 +242,7 @@ pub mod test_tube {
             vote_signatures.push(VoteSignature {
                 message_hash,
                 signature: signature.as_ref().to_vec(),
+                public_key: voter.public_key().to_bytes()
             })
         }
 
@@ -247,7 +252,7 @@ pub mod test_tube {
         // TODO: Do mock bank message from treasury to admin account
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
-        let execute_propose_resp = wasm
+        let _execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
                 &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {

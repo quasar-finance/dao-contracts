@@ -79,6 +79,7 @@ pub(crate) fn make_proposal(
                     vote_signatures: vec![VoteSignature {
                         message_hash: todo!(), // TODO
                         signature: todo!(),    // TODO
+                        public_key: todo!(),    // TODO
                     }],
                 }),
                 &[],

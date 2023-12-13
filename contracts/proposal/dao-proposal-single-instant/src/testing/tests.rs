@@ -880,6 +880,8 @@ fn test_active_threshold_absolute() {
                 vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
+                    public_key: todo!(),    // TODO
+
                 }],
             }),
             &[],
@@ -922,6 +924,8 @@ fn test_active_threshold_absolute() {
                 vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
+                    public_key: todo!(),    // TODO
+
                 }],
             }),
             &[],
@@ -969,6 +973,8 @@ fn test_active_threshold_percent() {
                 vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
+                    public_key: todo!(),    // TODO
+
                 }],
             }),
             &[],
@@ -1012,6 +1018,8 @@ fn test_active_threshold_percent() {
                 vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
+                    public_key: todo!(),    // TODO
+
                 }],
             }),
             &[],
@@ -2041,6 +2049,8 @@ fn test_proposal_too_large() {
                 vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
+                    public_key: todo!(),    // TODO
+
                 }],
             }),
             &[],
@@ -2096,6 +2106,8 @@ fn test_proposal_creation_permissions() {
                 vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
+                    public_key: todo!(),    // TODO
+
                 }],
             }),
             &[],
@@ -2125,6 +2137,8 @@ fn test_proposal_creation_permissions() {
                 vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
+                    public_key: todo!(),    // TODO
+
                 }],
             }),
             &[],
@@ -2159,6 +2173,7 @@ fn test_proposal_creation_permissions() {
                 vote_signatures: vec![VoteSignature {
                     message_hash: todo!(), // TODO
                     signature: todo!(),    // TODO
+                    public_key: todo!(),    // TODO
                 }],
             }),
             &[],
