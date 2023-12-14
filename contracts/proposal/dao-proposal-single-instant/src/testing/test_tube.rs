@@ -28,7 +28,7 @@ pub mod test_tube {
     const SLUG_DAO_PROPOSAL_SINGLE_INSTANT: &str = "dao_proposal_single_instant";
 
     /// Test constants
-    const INITIAL_BALANCE_AMOUNT: u128 = 1000000000000u128;
+    const INITIAL_BALANCE_AMOUNT: u128 = 1_000_000_000_000_000u128;
     const INITIAL_BALANCE_DENOM: &str = "ugov";
     // const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
 
@@ -70,10 +70,8 @@ pub mod test_tube {
                 weight: 1,
             })
             .collect::<Vec<_>>();
-        // TODO: Consider admin should be included ^ as member, but with voting power (weight) 0
 
         // Contracts to store and instantiate
-        // TODO: Check testing::instantiate::instantiate_with_cw4_groups_governance()
         let contracts_setup: Vec<(&str, Vec<u8>)> = vec![
             (
                 SLUG_CW4_GROUP,
@@ -100,9 +98,9 @@ pub mod test_tube {
                 (contract_name, code_id)
             })
             .collect();
-        // TODO: Instantiate msgs defined here -> https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
 
-        // Instantiate contract and sub-contracts in once
+        // Instantiate contract and sub-contracts
+        // https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
         let dao_dao_core_instantiate_resp = wasm
             .instantiate(
                 *code_ids.get(SLUG_DAO_DAO_CORE).unwrap(),
@@ -186,10 +184,9 @@ pub mod test_tube {
                 }
             }
         }
-
         // TODO: Assert that we have the required n. of contracts here, as the ^ nested for match could fail
 
-        // Increase app time or members will not have any voting power assigned.
+        // Increase app time or members will not have any voting power assigned
         app.increase_time(10000);
 
         (app, contracts, admin, voters)
@@ -266,7 +263,7 @@ pub mod test_tube {
             }
         }
 
-        // Get Admin balance before
+        // Get Admin balance before send
         let admin_balance_before = bank
             .query_balance(&QueryBalanceRequest {
                 address: admin.address(),
@@ -278,21 +275,53 @@ pub mod test_tube {
         println!("admin_balance_before: {:?}", admin_balance_before);
 
         // Execute bank send from admin to treasury
-        bank.send(
-            MsgSend {
-                from_address: admin.address(),
-                to_address: contracts
+        let bank_send_resp = bank
+            .send(
+                MsgSend {
+                    from_address: admin.address(),
+                    to_address: contracts
+                        .get(SLUG_DAO_DAO_CORE)
+                        .expect("Treasury address not found")
+                        .clone(),
+                    amount: vec![v1beta1::Coin {
+                        denom: INITIAL_BALANCE_DENOM.to_string(),
+                        amount: bank_send_amount.to_string(),
+                    }],
+                },
+                &admin,
+            )
+            .unwrap();
+        println!("bank_send_resp: {:?}", bank_send_resp.raw_data);
+
+        //app.increase_time(60);
+
+        // Get Admin balance after send
+        let admin_balance_after_send = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        println!("admin_balance_after_send: {:?}", admin_balance_after_send);
+
+        // Get treasury balance after send
+        let treasury_balance_after_send = bank
+            .query_balance(&QueryBalanceRequest {
+                address: contracts
                     .get(SLUG_DAO_DAO_CORE)
                     .expect("Treasury address not found")
                     .clone(),
-                amount: vec![v1beta1::Coin {
-                    denom: INITIAL_BALANCE_DENOM.to_string(),
-                    amount: bank_send_amount.to_string(),
-                }],
-            },
-            &admin,
-        )
-        .unwrap();
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        println!(
+            "treasury_balance_after_send: {:?}",
+            treasury_balance_after_send
+        );
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
         let execute_propose_resp = wasm
@@ -314,7 +343,7 @@ pub mod test_tube {
         // TODO: Assert something with _execute_propose_resp
         // assert!(_execute_propose_resp);
 
-        // Get Admin balance after send
+        // Get Admin balance after proposal
         let admin_balance_after = bank
             .query_balance(&QueryBalanceRequest {
                 address: admin.address(),
@@ -325,6 +354,23 @@ pub mod test_tube {
             .expect("failed to query balance");
 
         println!("admin_balance_after: {:?}", admin_balance_after);
+
+        // Get treasury balance after send
+        let treasury_balance_after = bank
+            .query_balance(&QueryBalanceRequest {
+                address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        println!(
+            "treasury_balance_after_proposal: {:?}",
+            treasury_balance_after
+        );
 
         // TODO: Assert balance is right
         assert!(admin_balance_after.amount == admin_balance_before.amount);

@@ -39,7 +39,7 @@ use dao_voting::status::Status;
 use dao_voting::threshold::{Threshold, ThresholdError};
 use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
 use dao_voting_cw4::msg::QueryMsg::GroupContract;
-use ripemd::{Digest as RipDigest, Ripemd160}; // TODO: Replace this with sha2::Digest and adapt dependant functions
+use ripemd::{Digest as RipDigest, Ripemd160};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -376,9 +376,7 @@ pub fn execute_propose(
         }
     }
 
-    // TODO: Here we should validate that the sent messages to execute payloads are amtching the message_hash, consider that msgs: Vec<CosmosMsg<Empty>>,
-    // TODO: consider that even if msgs is an array it will always contains 1 item, we have to compare it to a Vec<u8> array so we should convert CosmosMsg to bytes
-    // Validate the sent message against the majority message hash
+    // Validate messages to execute are matching the message_hash_majority
     if let Some(proposal_msg) = msgs.get(0) {
         let proposal_msg_bytes = to_vec(proposal_msg)?;
         let proposal_msg_hash = compute_sha256_hash(&proposal_msg_bytes);
@@ -399,15 +397,14 @@ pub fn execute_propose(
         .add_attribute("status", proposal.status.to_string()))
 }
 
-// TODO: Find a better place for this method which is an helper function.
+// todo: Find a better place for this method which is an helper function.
 pub fn compute_sha256_hash(message: &[u8]) -> Vec<u8> {
-    // TODO: What if we deprecate this because we pass the msgs directly as Vec<u8> as all the other arguments?
     let mut hasher = Sha256::new();
     hasher.update(message);
     hasher.finalize().to_vec()
 }
 
-// TODO: Find a better place for this method which is an helper function.
+// todo: Find a better place for this method which is an helper function.
 pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
     let sha_hash: [u8; 32] = Sha256::digest(pub_key)
         .as_slice()
@@ -422,7 +419,7 @@ pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, Cont
     Ok(addr)
 }
 
-// TODO: Find a better place for this method that has been downcasted from entrypoint to private method.
+// todo: Find a better place for this method that has been downcasted from entrypoint to private method.
 fn proposal_vote(
     deps: DepsMut,
     env: Env,
@@ -448,7 +445,7 @@ fn proposal_vote(
         return Err(ContractError::Expired { id: proposal_id });
     }
 
-    // TODO: We should inject the sender instead taking it from info, recovered with message_hash and signature uint8arrays
+    // we use voter_address instead of using info.sender
     let vote_power = get_voting_power(
         deps.as_ref(),
         voter_address.clone(),
@@ -532,7 +529,7 @@ fn proposal_vote(
         .add_attribute("status", prop.status.to_string()))
 }
 
-// TODO: Find a better place for this method that has been downcasted from entrypoint to private method.
+// todo: Find a better place for this method that has been downcasted from entrypoint to private method.
 fn proposal_execute(
     deps: DepsMut,
     env: Env,
@@ -571,6 +568,8 @@ fn proposal_execute(
 
     let response = {
         if !prop.msgs.is_empty() {
+            deps.api
+                .debug(format!("prop.msgs {:?}", prop.msgs).as_str());
             let execute_message = WasmMsg::Execute {
                 contract_addr: config.dao.to_string(),
                 msg: to_binary(&dao_interface::msg::ExecuteMsg::ExecuteProposalHook {
@@ -580,6 +579,8 @@ fn proposal_execute(
             };
             match config.close_proposal_on_execution_failure {
                 true => {
+                    deps.api
+                        .debug(format!("execute_message {:?}", execute_message).as_str());
                     let masked_proposal_id = mask_proposal_execution_proposal_id(proposal_id);
                     Response::default()
                         .add_submessage(SubMsg::reply_on_error(execute_message, masked_proposal_id))
@@ -604,11 +605,14 @@ fn proposal_execute(
     let hooks = match proposal_creation_policy {
         ProposalCreationPolicy::Anyone {} => hooks,
         ProposalCreationPolicy::Module { addr } => {
+            deps.api
+                .debug(format!("prop.status {:?}", prop.status).as_str());
             let msg = to_binary(&PreProposeHookMsg::ProposalCompletedHook {
                 proposal_id,
                 new_status: prop.status,
             })?;
             let mut hooks = hooks;
+            deps.api.debug(format!("msg {:?}", msg).as_str());
             hooks.push(SubMsg::reply_on_error(
                 WasmMsg::Execute {
                     contract_addr: addr.into_string(),
@@ -620,6 +624,7 @@ fn proposal_execute(
             hooks
         }
     };
+    deps.api.debug(format!("hooks {:?}", hooks).as_str());
 
     Ok(response
         .add_submessages(hooks)
