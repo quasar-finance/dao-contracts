@@ -16,8 +16,8 @@ use bech32::ToBase32;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order, Reply,
-    Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
+    to_binary, to_vec, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order,
+    Reply, Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
 };
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
 use cw4::MemberListResponse;
@@ -175,6 +175,11 @@ pub fn execute_propose(
         return Err(ContractError::Unauthorized {});
     }
 
+    // MVP Limitation: Supporting only one msg per proposal
+    if msgs.len() > 1 {
+        return Err(ContractError::TooManyMsgs {});
+    }
+
     // TODO: We need a permissioned proposer, probably the admin of the ProposalModule
     // so we can avoid Verifiers to be hitting the entrypoint skipping our API
     // This could be a security issue if we use Threshold::AbsoluteCount { threshold: 1 } as config param
@@ -226,7 +231,7 @@ pub fn execute_propose(
             expiration,
             threshold: config.threshold,
             total_power,
-            msgs,
+            msgs: msgs.clone(),
             status: Status::Open,
             votes: Votes::zero(),
             allow_revoting: config.allow_revoting,
@@ -262,30 +267,7 @@ pub fn execute_propose(
 
     PROPOSALS.save(deps.storage, id, &proposal)?;
 
-    // TODO: Check if this requires tweaking
     let hooks = new_proposal_hooks(PROPOSAL_HOOKS, deps.storage, id, proposer.as_str())?;
-
-    // TODO: Get list of members to check signatures against them
-    let proposal_config = CONFIG.load(deps.storage)?;
-
-    // TODO: query the proposal_config.dao contract to obtain the dao-voting-cw4
-    let dao_voting_cw4_addr: Addr = deps
-        .querier
-        .query_wasm_smart(proposal_config.dao, &VotingModule {})?;
-
-    // TODO: query the dao-voting-cw4 to obtain the cw4-group address
-    let cw4_group_addr: Addr = deps
-        .querier
-        .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
-
-    // TODO: Query cw4_group_addr to obtain list of members
-    let members: MemberListResponse = deps.querier.query_wasm_smart(
-        cw4_group_addr.clone(),
-        &ListMembers {
-            start_after: None,
-            limit: None,
-        },
-    )?;
 
     // Init empty message hash majority counts, this will be filled with message hashes and their accrued voting power
     let mut message_hash_counts: HashMap<Vec<u8>, Uint128> = HashMap::new();
@@ -301,12 +283,6 @@ pub fn execute_propose(
             Some(proposal.start_height),
         )?;
 
-        // TODO: CHeck if we want to avoid filling on 0 voting power
-        // if vote_power > Uint128::zero() {
-        //     *message_hash_counts
-        //         .entry(vote_signature.message_hash.clone())
-        //         .or_insert(Uint128::zero()) += vote_power;
-        // }
         *message_hash_counts
             .entry(vote_signature.message_hash.clone())
             .or_insert(Uint128::zero()) += vote_power;
@@ -338,6 +314,23 @@ pub fn execute_propose(
             ThresholdError::UnreachableThreshold {},
         ));
     };
+
+    // Get dao-voting-cw4 contract address
+    let dao_voting_cw4_addr: Addr = deps
+        .querier
+        .query_wasm_smart(config.dao.clone(), &VotingModule {})?;
+    // Get cw4-group contract address
+    let cw4_group_addr: Addr = deps
+        .querier
+        .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
+    // Get list of members
+    let members: MemberListResponse = deps.querier.query_wasm_smart(
+        cw4_group_addr.clone(),
+        &ListMembers {
+            start_after: None,
+            limit: None,
+        },
+    )?;
 
     // verify and cast votes
     for vote_signature in &vote_signatures {
@@ -383,12 +376,20 @@ pub fn execute_propose(
         }
     }
 
-    // TODO: Here we should validate that the sent messages to execute payloads are amtching the message_hash
-    // TODO: evaluate how do we support multiple msgs with the same sig?
+    // TODO: Here we should validate that the sent messages to execute payloads are amtching the message_hash, consider that msgs: Vec<CosmosMsg<Empty>>,
+    // TODO: consider that even if msgs is an array it will always contains 1 item, we have to compare it to a Vec<u8> array so we should convert CosmosMsg to bytes
+    // Validate the sent message against the majority message hash
+    if let Some(proposal_msg) = msgs.get(0) {
+        let proposal_msg_bytes = to_vec(proposal_msg)?;
+        let proposal_msg_hash = compute_sha256_hash(&proposal_msg_bytes);
+
+        if proposal_msg_hash != message_hash_majority {
+            return Err(ContractError::MessageHashMismatch {});
+        }
+    }
 
     // Execute the proposal
-    let debug = proposal_execute(deps.branch(), env, info.clone(), id)?;
-    deps.api.debug(format!("execute debug: {:?}", debug).as_str());
+    proposal_execute(deps.branch(), env, info.clone(), id)?;
 
     Ok(Response::default()
         .add_submessages(hooks)
@@ -396,6 +397,14 @@ pub fn execute_propose(
         .add_attribute("sender", info.sender)
         .add_attribute("proposal_id", id.to_string())
         .add_attribute("status", proposal.status.to_string()))
+}
+
+// TODO: Find a better place for this method which is an helper function.
+pub fn compute_sha256_hash(message: &[u8]) -> Vec<u8> {
+    // TODO: What if we deprecate this because we pass the msgs directly as Vec<u8> as all the other arguments?
+    let mut hasher = Sha256::new();
+    hasher.update(message);
+    hasher.finalize().to_vec()
 }
 
 // TODO: Find a better place for this method which is an helper function.

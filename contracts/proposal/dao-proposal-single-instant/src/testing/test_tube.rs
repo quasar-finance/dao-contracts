@@ -1,5 +1,6 @@
 #[cfg(test)]
 pub mod test_tube {
+    use crate::contract::compute_sha256_hash;
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::testing::mock_dependencies;
@@ -17,7 +18,6 @@ pub mod test_tube {
     use osmosis_test_tube::osmosis_std::types::cosmos::base::v1beta1;
     use osmosis_test_tube::{Account, Bank};
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
-    use sha2::{Digest, Sha256};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -29,6 +29,7 @@ pub mod test_tube {
 
     /// Test constants
     const INITIAL_BALANCE_AMOUNT: u128 = 1000000000000u128;
+    const INITIAL_BALANCE_DENOM: &str = "ugov";
     // const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
 
     pub fn test_init(
@@ -48,7 +49,7 @@ pub mod test_tube {
         let admin: SigningAccount = app
             .init_account(&[
                 Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo"),
-                Coin::new(INITIAL_BALANCE_AMOUNT, "ugov"),
+                Coin::new(INITIAL_BALANCE_AMOUNT, INITIAL_BALANCE_DENOM),
             ])
             .unwrap();
 
@@ -138,9 +139,9 @@ pub mod test_tube {
                             // },
                             max_voting_period: Duration::Height(1), // 1 block only to make it expire after the proposing block
                             min_voting_period: None,
-                            only_members_execute: false, // TODO
+                            only_members_execute: false,
                             allow_revoting: false,
-                            pre_propose_info: PreProposeInfo::AnyoneMayPropose {}, // TODO
+                            pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
                             close_proposal_on_execution_failure: true,
                         })
                         .unwrap(),
@@ -219,29 +220,33 @@ pub mod test_tube {
         }
     }
 
-    // Function to compute SHA256 hash of a message
-    pub fn compute_sha256_hash(message: &[u8]) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(message);
-        hasher.finalize().to_vec()
-    }
-
     #[test]
     #[ignore]
-    fn test_dao_proposal_single_instant_ok() {
+    fn test_dao_proposal_single_instant_ok_send() {
         let (app, contracts, admin, voters) = test_init(5);
         let bank = Bank::new(&app);
         let wasm = Wasm::new(&app);
 
+        // Create proposal execute msg as bank message from treasury back to the admin account
+        let bank_send_amount = 1000u128;
+        let execute_propose_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: admin.address(),
+            amount: vec![Coin {
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+                amount: Uint128::new(bank_send_amount),
+            }],
+        });
+        let execute_propose_msg_binary = to_binary(&execute_propose_msg).unwrap();
+
         // Creating different messages for each voter.
+        // ... add as many messages as there are voters
         // The number of items of this array should match the test_init({voters_number}) value.
         let messages: Vec<&[u8]> = vec![
-            b"Hello World!", // A <- will pass!
-            b"Hello World!", // A <- will pass!
-            b"World Hello!", // B
-            b"Hello!",       // C
-            b"World!",       // D
-                             // ... add as many messages as there are voters
+            execute_propose_msg_binary.as_slice(), // A <- will pass!
+            execute_propose_msg_binary.as_slice(), // A <- will pass!
+            b"World Hello!",                       // B
+            b"Hello!",                             // C
+            b"World!",                             // D
         ];
 
         let mut vote_signatures: Vec<VoteSignature> = vec![];
@@ -250,7 +255,6 @@ pub mod test_tube {
             if let Some(clear_message) = messages.get(index) {
                 let message_hash = compute_sha256_hash(clear_message);
                 let signature = voter.signing_key().sign(clear_message).unwrap();
-
                 // VoteSignature
                 vote_signatures.push(VoteSignature {
                     message_hash,
@@ -266,7 +270,7 @@ pub mod test_tube {
         let admin_balance_before = bank
             .query_balance(&QueryBalanceRequest {
                 address: admin.address(),
-                denom: "ugov".to_string(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
             })
             .unwrap()
             .balance
@@ -281,16 +285,10 @@ pub mod test_tube {
                     .get(SLUG_DAO_DAO_CORE)
                     .expect("Treasury address not found")
                     .clone(),
-                amount: vec![
-                    v1beta1::Coin {
-                    denom: "ugov".to_string(),
-                    amount: "1000".to_string(),
-                },
-                v1beta1::Coin {
-                    denom: "uosmo".to_string(),
-                    amount: "1000000".to_string(),
-                }
-                ],
+                amount: vec![v1beta1::Coin {
+                    denom: INITIAL_BALANCE_DENOM.to_string(),
+                    amount: bank_send_amount.to_string(),
+                }],
             },
             &admin,
         )
@@ -303,16 +301,7 @@ pub mod test_tube {
                 &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
-                    msgs: vec![
-                        // Create proposal execute msg as bank message from treasury back to the admin account
-                        CosmosMsg::Bank(BankMsg::Send {
-                            to_address: admin.address(),
-                            amount: vec![Coin {
-                                denom: "ugov".to_string(),
-                                amount: Uint128::new(1000u128),
-                            }],
-                        }),
-                    ],
+                    msgs: vec![execute_propose_msg],
                     proposer: None,
                     vote_signatures,
                 }),
@@ -322,9 +311,6 @@ pub mod test_tube {
             .unwrap();
         println!("execute_propose_resp: {:?}", execute_propose_resp);
 
-        // Wait some blocks
-        app.increase_time(10000);
-
         // TODO: Assert something with _execute_propose_resp
         // assert!(_execute_propose_resp);
 
@@ -332,7 +318,7 @@ pub mod test_tube {
         let admin_balance_after = bank
             .query_balance(&QueryBalanceRequest {
                 address: admin.address(),
-                denom: "ugov".to_string(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
             })
             .unwrap()
             .balance
@@ -346,125 +332,125 @@ pub mod test_tube {
         // TODO: Assert proposal status after (closed, executed, deposit refunded, etc)
     }
 
-    #[test]
-    #[ignore]
-    /// Test case that fails due to tie in message_hash_majority computation by voting_power.
-    fn test_dao_proposal_single_instant_ko_tie() {
-        let (app, contracts, admin, voters) = test_init(5);
-        let wasm = Wasm::new(&app);
+    // #[test]
+    // #[ignore]
+    // /// Test case that fails due to tie in message_hash_majority computation by voting_power.
+    // fn test_dao_proposal_single_instant_ko_tie() {
+    //     let (app, contracts, admin, voters) = test_init(5);
+    //     let wasm = Wasm::new(&app);
 
-        // Creating different messages for each voter.
-        // The number of items of this array should match the test_init({voters_number}) value.
-        let messages: Vec<&[u8]> = vec![
-            b"Hello World! 0",
-            b"Hello World! 1",
-            b"Hello World! 2",
-            b"Hello World! 3",
-            b"Hello World! 4",
-            // ... add as many messages as there are voters
-        ];
+    //     // Creating different messages for each voter.
+    //     // The number of items of this array should match the test_init({voters_number}) value.
+    //     let messages: Vec<&[u8]> = vec![
+    //         b"Hello World! 0",
+    //         b"Hello World! 1",
+    //         b"Hello World! 2",
+    //         b"Hello World! 3",
+    //         b"Hello World! 4",
+    //         // ... add as many messages as there are voters
+    //     ];
 
-        let mut vote_signatures: Vec<VoteSignature> = vec![];
-        for (index, voter) in voters.iter().enumerate() {
-            // Ensure that there's a message for each voter
-            if let Some(clear_message) = messages.get(index) {
-                let message_hash = compute_sha256_hash(clear_message);
-                let signature = voter.signing_key().sign(clear_message).unwrap();
+    //     let mut vote_signatures: Vec<VoteSignature> = vec![];
+    //     for (index, voter) in voters.iter().enumerate() {
+    //         // Ensure that there's a message for each voter
+    //         if let Some(clear_message) = messages.get(index) {
+    //             let message_hash = compute_sha256_hash(clear_message);
+    //             let signature = voter.signing_key().sign(clear_message).unwrap();
 
-                // VoteSignature
-                vote_signatures.push(VoteSignature {
-                    message_hash,
-                    signature: signature.as_ref().to_vec(),
-                    public_key: voter.public_key().to_bytes(),
-                });
-            } else {
-                // Do nothing in the case where there's no message for a voter
-            }
-        }
+    //             // VoteSignature
+    //             vote_signatures.push(VoteSignature {
+    //                 message_hash,
+    //                 signature: signature.as_ref().to_vec(),
+    //                 public_key: voter.public_key().to_bytes(),
+    //             });
+    //         } else {
+    //             // Do nothing in the case where there's no message for a voter
+    //         }
+    //     }
 
-        // TODO: Do Admin send from admin to treasury
-        // TODO: Get Admin balance before
+    //     // TODO: Do Admin send from admin to treasury
+    //     // TODO: Get Admin balance before
 
-        // TODO: Do mock bank message from treasury to admin account
+    //     // TODO: Do mock bank message from treasury to admin account
 
-        // Execute execute_propose (proposal, voting and execution in one single workflow)
-        let _execute_propose_resp = wasm
-            .execute(
-                contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
-                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
-                    title: "Title".to_string(),
-                    description: "Description".to_string(),
-                    msgs: vec![], // TODO: Mock a simple bank transfer that in prod will be the trigger exec to the middleware contract
-                    proposer: None, // TODO: Some(admin.address()) is causing "pre-propose modules must specify a proposer. lacking one, no proposer should be specified: execute wasm contract failed"
-                    vote_signatures,
-                }),
-                &vec![],
-                &admin,
-            )
-            .unwrap();
+    //     // Execute execute_propose (proposal, voting and execution in one single workflow)
+    //     let _execute_propose_resp = wasm
+    //         .execute(
+    //             contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
+    //             &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+    //                 title: "Title".to_string(),
+    //                 description: "Description".to_string(),
+    //                 msgs: vec![], // TODO: Mock a simple bank transfer that in prod will be the trigger exec to the middleware contract
+    //                 proposer: None, // TODO: Some(admin.address()) is causing "pre-propose modules must specify a proposer. lacking one, no proposer should be specified: execute wasm contract failed"
+    //                 vote_signatures,
+    //             }),
+    //             &vec![],
+    //             &admin,
+    //         )
+    //         .unwrap();
 
-        // TODO: Assert Admin balance after = (before + transfer_amount)
+    //     // TODO: Assert Admin balance after = (before + transfer_amount)
 
-        // TODO: Assert proposal status after (closed, executed, deposit refunded, etc)
-    }
+    //     // TODO: Assert proposal status after (closed, executed, deposit refunded, etc)
+    // }
 
-    #[test]
-    #[ignore]
-    /// Test case that fails due to not enough vote_signatures i.e. sent 1 out of 2 minimum required by quorum confirutaion.
-    fn test_dao_proposal_single_instant_ko_quorum() {
-        let (app, contracts, admin, voters) = test_init(1);
-        let wasm = Wasm::new(&app);
+    // #[test]
+    // #[ignore]
+    // /// Test case that fails due to not enough vote_signatures i.e. sent 1 out of 2 minimum required by quorum confirutaion.
+    // fn test_dao_proposal_single_instant_ko_quorum() {
+    //     let (app, contracts, admin, voters) = test_init(1);
+    //     let wasm = Wasm::new(&app);
 
-        // Creating different messages for each voter.
-        // The number of items of this array should match the test_init({voters_number}) value.
-        let messages: Vec<&[u8]> = vec![
-            b"Hello World!",
-            // ... add as many messages as there are voters
-        ];
+    //     // Creating different messages for each voter.
+    //     // The number of items of this array should match the test_init({voters_number}) value.
+    //     let messages: Vec<&[u8]> = vec![
+    //         b"Hello World!",
+    //         // ... add as many messages as there are voters
+    //     ];
 
-        let mut vote_signatures: Vec<VoteSignature> = vec![];
-        for (index, voter) in voters.iter().enumerate() {
-            // Ensure that there's a message for each voter
-            if let Some(clear_message) = messages.get(index) {
-                let message_hash = compute_sha256_hash(clear_message);
-                let signature = voter.signing_key().sign(clear_message).unwrap();
+    //     let mut vote_signatures: Vec<VoteSignature> = vec![];
+    //     for (index, voter) in voters.iter().enumerate() {
+    //         // Ensure that there's a message for each voter
+    //         if let Some(clear_message) = messages.get(index) {
+    //             let message_hash = compute_sha256_hash(clear_message);
+    //             let signature = voter.signing_key().sign(clear_message).unwrap();
 
-                // VoteSignature
-                vote_signatures.push(VoteSignature {
-                    message_hash,
-                    signature: signature.as_ref().to_vec(),
-                    public_key: voter.public_key().to_bytes(),
-                });
-            } else {
-                // Do nothing in the case where there's no message for a voter
-            }
-        }
+    //             // VoteSignature
+    //             vote_signatures.push(VoteSignature {
+    //                 message_hash,
+    //                 signature: signature.as_ref().to_vec(),
+    //                 public_key: voter.public_key().to_bytes(),
+    //             });
+    //         } else {
+    //             // Do nothing in the case where there's no message for a voter
+    //         }
+    //     }
 
-        // TODO: Do Admin send from admin to treasury
-        // TODO: Get Admin balance before
+    //     // TODO: Do Admin send from admin to treasury
+    //     // TODO: Get Admin balance before
 
-        // TODO: Do mock bank message from treasury to admin account
+    //     // TODO: Do mock bank message from treasury to admin account
 
-        // Execute execute_propose (proposal, voting and execution in one single workflow)
-        let _execute_propose_resp = wasm
-            .execute(
-                contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
-                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
-                    title: "Title".to_string(),
-                    description: "Description".to_string(),
-                    msgs: vec![], // TODO: Mock a simple bank transfer that in prod will be the trigger exec to the middleware contract
-                    proposer: None, // TODO: Some(admin.address()) is causing "pre-propose modules must specify a proposer. lacking one, no proposer should be specified: execute wasm contract failed"
-                    vote_signatures,
-                }),
-                &vec![],
-                &admin,
-            )
-            .unwrap();
+    //     // Execute execute_propose (proposal, voting and execution in one single workflow)
+    //     let _execute_propose_resp = wasm
+    //         .execute(
+    //             contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
+    //             &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+    //                 title: "Title".to_string(),
+    //                 description: "Description".to_string(),
+    //                 msgs: vec![], // TODO: Mock a simple bank transfer that in prod will be the trigger exec to the middleware contract
+    //                 proposer: None, // TODO: Some(admin.address()) is causing "pre-propose modules must specify a proposer. lacking one, no proposer should be specified: execute wasm contract failed"
+    //                 vote_signatures,
+    //             }),
+    //             &vec![],
+    //             &admin,
+    //         )
+    //         .unwrap();
 
-        // TODO: Assert Admin balance after = (before + transfer_amount)
+    //     // TODO: Assert Admin balance after = (before + transfer_amount)
 
-        // TODO: Assert proposal status after (closed, executed, deposit refunded, etc)
-    }
+    //     // TODO: Assert proposal status after (closed, executed, deposit refunded, etc)
+    // }
 
     #[test]
     #[ignore]
