@@ -605,14 +605,11 @@ fn proposal_execute(
     let hooks = match proposal_creation_policy {
         ProposalCreationPolicy::Anyone {} => hooks,
         ProposalCreationPolicy::Module { addr } => {
-            deps.api
-                .debug(format!("prop.status {:?}", prop.status).as_str());
             let msg = to_binary(&PreProposeHookMsg::ProposalCompletedHook {
                 proposal_id,
                 new_status: prop.status,
             })?;
             let mut hooks = hooks;
-            deps.api.debug(format!("msg {:?}", msg).as_str());
             hooks.push(SubMsg::reply_on_error(
                 WasmMsg::Execute {
                     contract_addr: addr.into_string(),
@@ -626,6 +623,7 @@ fn proposal_execute(
     };
     deps.api.debug(format!("hooks {:?}", hooks).as_str());
 
+    deps.api.debug(format!("response {:?}", response).as_str());
     Ok(response
         .add_submessages(hooks)
         .add_attribute("action", "execute")

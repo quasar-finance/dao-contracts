@@ -241,9 +241,9 @@ pub mod test_tube {
         let messages: Vec<&[u8]> = vec![
             execute_propose_msg_binary.as_slice(), // A <- will pass!
             execute_propose_msg_binary.as_slice(), // A <- will pass!
-            b"World Hello!",                       // B
-            b"Hello!",                             // C
-            b"World!",                             // D
+            execute_propose_msg_binary.as_slice(), // A <- will pass!
+            b"Hello World!",                       // B
+            b"Hello World!",                       // B
         ];
 
         let mut vote_signatures: Vec<VoteSignature> = vec![];
@@ -292,8 +292,6 @@ pub mod test_tube {
             )
             .unwrap();
         println!("bank_send_resp: {:?}", bank_send_resp.raw_data);
-
-        //app.increase_time(60);
 
         // Get Admin balance after send
         let admin_balance_after_send = bank
