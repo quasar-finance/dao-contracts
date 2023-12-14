@@ -179,11 +179,8 @@ pub mod test_tube {
                 }
             }
         }
-        // TODO: Assert that we have the required n. of contracts here, as the ^ nested for match could fail
 
-        println!("block_height_before: {:?}", app.get_block_height());
-        app.increase_time(60);
-        println!("block_height_after: {:?}", app.get_block_height());
+        // TODO: Assert that we have the required n. of contracts here, as the ^ nested for match could fail
 
         (app, contracts, admin, voters)
     }
@@ -229,8 +226,6 @@ pub mod test_tube {
         // TODO: Mock signatures taking voter.publickey to recover the sig
         let mut vote_signatures: Vec<VoteSignature> = vec![];
         for voter in voters {
-            println!("address before: {:?}", voter.address());
-            println!("pubkey before: {:?}", voter.public_key().to_bytes());
             let clear_message = b"Hello World!";
             let message_hash = compute_sha256_hash(clear_message);
             let signature = voter.signing_key().sign(clear_message).unwrap();

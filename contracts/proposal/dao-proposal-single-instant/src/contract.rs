@@ -285,38 +285,42 @@ pub fn execute_propose(
         },
     )?;
 
-    // As we are passing message_hash and signature tuples, we should be able to always recover the correct publicKey.
-    // Given this assumption we should previously check what the majority says leveraging the clear message_hash.
-    let mut message_hash_counts: HashMap<Vec<u8>, u32> = HashMap::new();
+    // Init empty message hash majority counts, this will be filled with message hashes and their accrued voting power
+    let mut message_hash_counts: HashMap<Vec<u8>, u64> = HashMap::new();
 
-    // TODO: START - We should iterate just one time vote_signatures to be able applying voting power to message_hash_majority. Double check.
-
+    // sum vote counts based on member weight / voting power
     for vote_signature in &vote_signatures {
+        let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo").unwrap();
+        let member = members
+            .members
+            .iter()
+            .find(|member| member.addr == voter_address)
+            .unwrap();
+
         *message_hash_counts
             .entry(vote_signature.message_hash.clone())
-            .or_insert(0) += 1;
+            .or_insert(0) += member.weight;
     }
 
-    // TODO: We need to take in account the .weight of a member, so we need to filter message_hash_majority based on this,
-    // and also avoid taking in account not recovering messages.
-
-    // Get majority message count and throw error if we have a tie
-    let message_hash_majority: Vec<u8> = if let Some(max_count) = message_hash_counts.values().max()
+    // Determine the message hash with the highest accumulated voting power
+    let message_hash_majority: Vec<u8> = if let Some((_, &max_weight)) = message_hash_counts
+        .iter()
+        .max_by_key(|&(_, &weight)| weight)
     {
-        let max_count_hashes: Vec<Vec<u8>> = message_hash_counts
+        let max_power_hashes: Vec<Vec<u8>> = message_hash_counts
             .iter()
-            .filter(|&(_, &count)| count == *max_count)
+            .filter(|&(_, &weight)| weight == max_weight)
             .map(|(hash, _)| hash.clone()) // Clone the Vec<u8> here
             .collect();
 
-        if max_count_hashes.len() > 1 {
+        if max_power_hashes.len() > 1 {
             // Handle the error case where there is a tie
             return Err(ContractError::ThresholdError(
                 ThresholdError::UnreachableThreshold {},
             ));
         } else {
             // Return message_hash_majority value
-            max_count_hashes.into_iter().next().unwrap_or_default()
+            max_power_hashes.into_iter().next().unwrap_or_default()
         }
     } else {
         // Handle the case where there are no votes
@@ -324,6 +328,7 @@ pub fn execute_propose(
             ThresholdError::UnreachableThreshold {},
         ));
     };
+
     deps.api.debug(
         format!(
             "DEBUG 2: message_hash_majority: {:?}",
@@ -332,12 +337,11 @@ pub fn execute_propose(
         .as_str(),
     );
 
-    // Foreach signature (vote) received, compute vote and vote on proposal
+    // verify and cast votes
     for vote_signature in &vote_signatures {
         let mut vote: Option<Vote> = None;
 
-        // Verify or throw error
-        // TODO: avoid throwing error so we can just ignore this and continue;
+        let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo")?;
         let verified = deps
             .api
             .secp256k1_verify(
@@ -346,11 +350,15 @@ pub fn execute_propose(
                 vote_signature.public_key.as_slice(),
             )
             .unwrap();
-        let address = derive_addr_from_pubkey(vote_signature.public_key.as_slice(), "osmo")?;
 
-        if verified && members.members.iter().any(|member| member.addr == address) {
-            // Signature has been verified and a Member address has been found
-            // TODO: TAKE IN ACCOUNT VOTING WEIGHT! Compute yes or no vote based on majority previous computed.
+        // If Signature has been verified and a Member address has been found
+        if verified
+            && members
+                .members
+                .iter()
+                .any(|member| member.addr == voter_address)
+        {
+            // Compute yes or no vote based on majority previous computed.
             vote = Some(if vote_signature.message_hash == message_hash_majority {
                 Vote::Yes
             } else {
@@ -374,9 +382,8 @@ pub fn execute_propose(
             )?;
         }
     }
-    deps.api.debug("DEBUG 4");
 
-    // TODO: END
+    deps.api.debug("DEBUG 4");
 
     // Execute the proposal
     proposal_execute(deps.branch(), env, info.clone(), id)?;
