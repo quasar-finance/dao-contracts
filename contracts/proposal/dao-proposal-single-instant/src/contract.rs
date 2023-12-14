@@ -17,7 +17,7 @@ use bech32::ToBase32;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order, Reply,
-    Response, StdResult, Storage, SubMsg, WasmMsg,
+    Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
 };
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
 use cw4::MemberListResponse;
@@ -285,22 +285,38 @@ pub fn execute_propose(
         },
     )?;
 
+    deps.api
+        .debug(format!("DEBUG 1: members: {:?}", members).as_str());
+
     // Init empty message hash majority counts, this will be filled with message hashes and their accrued voting power
-    let mut message_hash_counts: HashMap<Vec<u8>, u64> = HashMap::new();
+    let mut message_hash_counts: HashMap<Vec<u8>, Uint128> = HashMap::new();
 
     // sum vote counts based on member weight / voting power
     for vote_signature in &vote_signatures {
         let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo").unwrap();
-        let member = members
-            .members
-            .iter()
-            .find(|member| member.addr == voter_address)
-            .unwrap();
 
+        let vote_power = get_voting_power(
+            deps.as_ref(),
+            Addr::unchecked(voter_address),
+            &config.dao,
+            Some(proposal.start_height),
+        )?;
+        deps.api
+            .debug(format!("DEBUG 1.5: members: {:?}", vote_power).as_str());
+
+        // TODO: CHeck if we want to avoid filling on 0 voting power
+        // if vote_power > Uint128::zero() {
+        //     *message_hash_counts
+        //         .entry(vote_signature.message_hash.clone())
+        //         .or_insert(Uint128::zero()) += vote_power;
+        // }
         *message_hash_counts
             .entry(vote_signature.message_hash.clone())
-            .or_insert(0) += member.weight;
+            .or_insert(Uint128::zero()) += vote_power;
     }
+
+    deps.api
+        .debug(format!("DEBUG 1.75: message_hash_counts: {:?}", message_hash_counts).as_str());
 
     // Determine the message hash with the highest accumulated voting power
     let message_hash_majority: Vec<u8> = if let Some((_, &max_weight)) = message_hash_counts
@@ -339,8 +355,6 @@ pub fn execute_propose(
 
     // verify and cast votes
     for vote_signature in &vote_signatures {
-        let mut vote: Option<Vote> = None;
-
         let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo")?;
         let verified = deps
             .api
@@ -359,27 +373,28 @@ pub fn execute_propose(
                 .any(|member| member.addr == voter_address)
         {
             // Compute yes or no vote based on majority previous computed.
-            vote = Some(if vote_signature.message_hash == message_hash_majority {
+            let vote = Some(if vote_signature.message_hash == message_hash_majority {
                 Vote::Yes
             } else {
                 Vote::No
             });
+
+            // Call proposal_vote only if vote_option is not None
+            if let Some(vote) = vote {
+                deps.api.debug("DEBUG 3: Voting");
+                proposal_vote(
+                    deps.branch(),
+                    env.clone(),
+                    info.clone(),
+                    id,
+                    Addr::unchecked(voter_address),
+                    vote,
+                    None, // rationale hardcoded to None
+                )?;
+            }
         } else {
             // Do nothing, skip this iteration and continue. We didn't recognize the address on members list.
             continue;
-        }
-
-        // Call proposal_vote only if vote_option is not None
-        if let Some(vote) = vote {
-            deps.api.debug("DEBUG 3: Voting");
-            proposal_vote(
-                deps.branch(),
-                env.clone(),
-                info.clone(),
-                id,
-                vote,
-                None, // rationale hardcoded to None
-            )?;
         }
     }
 
@@ -417,6 +432,7 @@ fn proposal_vote(
     env: Env,
     info: MessageInfo,
     proposal_id: u64,
+    voter_address: Addr,
     vote: Vote,
     rationale: Option<String>,
 ) -> Result<Response, ContractError> {
@@ -436,48 +452,57 @@ fn proposal_vote(
         return Err(ContractError::Expired { id: proposal_id });
     }
 
+    deps.api.debug(voter_address.as_str());
+
     // TODO: We should inject the sender instead taking it from info, recovered with message_hash and signature uint8arrays
     let vote_power = get_voting_power(
         deps.as_ref(),
-        info.sender.clone(),
+        voter_address.clone(),
         &config.dao,
         Some(prop.start_height),
     )?;
+    deps.api
+        .debug(format!("vote power: {:?}", vote_power).as_str());
+
     if vote_power.is_zero() {
         return Err(ContractError::NotRegistered {});
     }
 
-    BALLOTS.update(deps.storage, (proposal_id, &info.sender), |bal| match bal {
-        Some(current_ballot) => {
-            if prop.allow_revoting {
-                if current_ballot.vote == vote {
-                    // Don't allow casting the same vote more than
-                    // once. This seems liable to be confusing
-                    // behavior.
-                    Err(ContractError::AlreadyCast {})
+    BALLOTS.update(
+        deps.storage,
+        (proposal_id, &voter_address),
+        |bal| match bal {
+            Some(current_ballot) => {
+                if prop.allow_revoting {
+                    if current_ballot.vote == vote {
+                        // Don't allow casting the same vote more than
+                        // once. This seems liable to be confusing
+                        // behavior.
+                        Err(ContractError::AlreadyCast {})
+                    } else {
+                        // Remove the old vote if this is a re-vote.
+                        prop.votes
+                            .remove_vote(current_ballot.vote, current_ballot.power);
+                        Ok(Ballot {
+                            power: vote_power,
+                            vote,
+                            // Roll over the previous rationale. If
+                            // you're changing your vote, you've also
+                            // likely changed your thinking.
+                            rationale: rationale.clone(),
+                        })
+                    }
                 } else {
-                    // Remove the old vote if this is a re-vote.
-                    prop.votes
-                        .remove_vote(current_ballot.vote, current_ballot.power);
-                    Ok(Ballot {
-                        power: vote_power,
-                        vote,
-                        // Roll over the previous rationale. If
-                        // you're changing your vote, you've also
-                        // likely changed your thinking.
-                        rationale: rationale.clone(),
-                    })
+                    Err(ContractError::AlreadyVoted {})
                 }
-            } else {
-                Err(ContractError::AlreadyVoted {})
             }
-        }
-        None => Ok(Ballot {
-            power: vote_power,
-            vote,
-            rationale: rationale.clone(),
-        }),
-    })?;
+            None => Ok(Ballot {
+                power: vote_power,
+                vote,
+                rationale: rationale.clone(),
+            }),
+        },
+    )?;
 
     let old_status = prop.status;
 
@@ -499,7 +524,7 @@ fn proposal_vote(
         VOTE_HOOKS,
         deps.storage,
         proposal_id,
-        info.sender.to_string(),
+        voter_address.to_string(),
         vote.to_string(),
     )?;
 
@@ -508,6 +533,7 @@ fn proposal_vote(
         .add_submessages(vote_hooks)
         .add_attribute("action", "vote")
         .add_attribute("sender", info.sender)
+        .add_attribute("voter_address", voter_address)
         .add_attribute("proposal_id", proposal_id.to_string())
         .add_attribute("position", vote.to_string())
         .add_attribute("rationale", rationale.as_deref().unwrap_or("_none"))
