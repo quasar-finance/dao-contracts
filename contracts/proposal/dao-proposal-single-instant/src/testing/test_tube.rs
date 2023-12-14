@@ -181,6 +181,9 @@ pub mod test_tube {
 
         // TODO: Assert that we have the required n. of contracts here, as the ^ nested for match could fail
 
+        // Increase app time or members will not have any voting power assigned.
+        app.increase_time(10000);
+
         (app, contracts, admin, voters)
     }
 
