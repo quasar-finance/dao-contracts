@@ -297,7 +297,8 @@ pub fn execute_propose(
             .or_insert(0) += 1;
     }
 
-    // TODO: We need to take in account the .weight of a member, so we need to filter message_hash_majority based on this, and also avoid taking in account not recovering messages.
+    // TODO: We need to take in account the .weight of a member, so we need to filter message_hash_majority based on this,
+    // and also avoid taking in account not recovering messages.
 
     // Get majority message count and throw error if we have a tie
     let message_hash_majority: Vec<u8> = if let Some(max_count) = message_hash_counts.values().max()
@@ -333,6 +334,8 @@ pub fn execute_propose(
 
     // Foreach signature (vote) received, compute vote and vote on proposal
     for vote_signature in &vote_signatures {
+        let mut vote: Option<Vote> = None;
+
         // Verify or throw error
         // TODO: avoid throwing error so we can just ignore this and continue;
         let verified = deps
@@ -345,9 +348,8 @@ pub fn execute_propose(
             .unwrap();
         let address = derive_addr_from_pubkey(vote_signature.public_key.as_slice(), "osmo")?;
 
-        let mut vote: Option<Vote> = None;
         if verified && members.members.iter().any(|member| member.addr == address) {
-            // Members has been found
+            // Signature has been verified and a Member address has been found
             // TODO: TAKE IN ACCOUNT VOTING WEIGHT! Compute yes or no vote based on majority previous computed.
             vote = Some(if vote_signature.message_hash == message_hash_majority {
                 Vote::Yes
@@ -356,11 +358,8 @@ pub fn execute_propose(
             });
         } else {
             // Do nothing, skip this iteration and continue. We didn't recognize the address on members list.
-            continue; // TODO: Check if this should be an error
+            continue;
         }
-
-        // Rationale (optional). TODO: Deprecate this or hardcode it to "".tostring()
-        let rationale = Some("I'm voting because this is cool!".to_string());
 
         // Call proposal_vote only if vote_option is not None
         if let Some(vote) = vote {
@@ -371,7 +370,7 @@ pub fn execute_propose(
                 info.clone(),
                 id,
                 vote,
-                rationale,
+                None, // rationale hardcoded to None
             )?;
         }
     }
