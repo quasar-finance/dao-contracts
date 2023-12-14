@@ -383,8 +383,12 @@ pub fn execute_propose(
         }
     }
 
+    // TODO: Here we should validate that the sent messages to execute payloads are amtching the message_hash
+    // TODO: evaluate how do we support multiple msgs with the same sig?
+
     // Execute the proposal
-    proposal_execute(deps.branch(), env, info.clone(), id)?;
+    let debug = proposal_execute(deps.branch(), env, info.clone(), id)?;
+    deps.api.debug(format!("execute debug: {:?}", debug).as_str());
 
     Ok(Response::default()
         .add_submessages(hooks)

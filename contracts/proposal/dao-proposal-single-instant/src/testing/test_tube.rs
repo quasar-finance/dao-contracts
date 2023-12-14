@@ -281,17 +281,23 @@ pub mod test_tube {
                     .get(SLUG_DAO_DAO_CORE)
                     .expect("Treasury address not found")
                     .clone(),
-                amount: vec![v1beta1::Coin {
+                amount: vec![
+                    v1beta1::Coin {
                     denom: "ugov".to_string(),
                     amount: "1000".to_string(),
-                }],
+                },
+                v1beta1::Coin {
+                    denom: "uosmo".to_string(),
+                    amount: "1000000".to_string(),
+                }
+                ],
             },
             &admin,
         )
         .unwrap();
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
-        let _execute_propose_resp = wasm
+        let execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
                 &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
@@ -314,6 +320,7 @@ pub mod test_tube {
                 &admin,
             )
             .unwrap();
+        println!("execute_propose_resp: {:?}", execute_propose_resp);
 
         // Wait some blocks
         app.increase_time(10000);
