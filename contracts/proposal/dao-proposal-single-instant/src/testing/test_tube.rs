@@ -275,7 +275,7 @@ pub mod test_tube {
         println!("admin_balance_before: {:?}", admin_balance_before);
 
         // Execute bank send from admin to treasury
-        let bank_send_resp = bank
+        bank
             .send(
                 MsgSend {
                     from_address: admin.address(),
@@ -289,9 +289,7 @@ pub mod test_tube {
                     }],
                 },
                 &admin,
-            )
-            .unwrap();
-        println!("bank_send_resp: {:?}", bank_send_resp.raw_data);
+            ).unwrap();
 
         // Get Admin balance after send
         let admin_balance_after_send = bank
