@@ -180,6 +180,8 @@ pub fn execute_propose(
     // This could be a security issue if we use Threshold::AbsoluteCount { threshold: 1 } as config param
     // Also pre_propose modules and hooks would be relevant in this context
 
+    // TODO: We want to avoid further execution if vote_signatures is lower than the required quorum amount or we will fail during execution due to not in 'passed' state.
+
     // Determine the appropriate proposer. If this is coming from our
     // pre-propose module, it must be specified. Otherwise, the
     // proposer should not be specified.
@@ -285,9 +287,6 @@ pub fn execute_propose(
         },
     )?;
 
-    deps.api
-        .debug(format!("DEBUG 1: members: {:?}", members).as_str());
-
     // Init empty message hash majority counts, this will be filled with message hashes and their accrued voting power
     let mut message_hash_counts: HashMap<Vec<u8>, Uint128> = HashMap::new();
 
@@ -301,8 +300,6 @@ pub fn execute_propose(
             &config.dao,
             Some(proposal.start_height),
         )?;
-        deps.api
-            .debug(format!("DEBUG 1.5: members: {:?}", vote_power).as_str());
 
         // TODO: CHeck if we want to avoid filling on 0 voting power
         // if vote_power > Uint128::zero() {
@@ -314,9 +311,6 @@ pub fn execute_propose(
             .entry(vote_signature.message_hash.clone())
             .or_insert(Uint128::zero()) += vote_power;
     }
-
-    deps.api
-        .debug(format!("DEBUG 1.75: message_hash_counts: {:?}", message_hash_counts).as_str());
 
     // Determine the message hash with the highest accumulated voting power
     let message_hash_majority: Vec<u8> = if let Some((_, &max_weight)) = message_hash_counts
@@ -344,14 +338,6 @@ pub fn execute_propose(
             ThresholdError::UnreachableThreshold {},
         ));
     };
-
-    deps.api.debug(
-        format!(
-            "DEBUG 2: message_hash_majority: {:?}",
-            message_hash_majority
-        )
-        .as_str(),
-    );
 
     // verify and cast votes
     for vote_signature in &vote_signatures {
@@ -381,7 +367,6 @@ pub fn execute_propose(
 
             // Call proposal_vote only if vote_option is not None
             if let Some(vote) = vote {
-                deps.api.debug("DEBUG 3: Voting");
                 proposal_vote(
                     deps.branch(),
                     env.clone(),
@@ -397,8 +382,6 @@ pub fn execute_propose(
             continue;
         }
     }
-
-    deps.api.debug("DEBUG 4");
 
     // Execute the proposal
     proposal_execute(deps.branch(), env, info.clone(), id)?;
@@ -452,8 +435,6 @@ fn proposal_vote(
         return Err(ContractError::Expired { id: proposal_id });
     }
 
-    deps.api.debug(voter_address.as_str());
-
     // TODO: We should inject the sender instead taking it from info, recovered with message_hash and signature uint8arrays
     let vote_power = get_voting_power(
         deps.as_ref(),
@@ -461,8 +442,6 @@ fn proposal_vote(
         &config.dao,
         Some(prop.start_height),
     )?;
-    deps.api
-        .debug(format!("vote power: {:?}", vote_power).as_str());
 
     if vote_power.is_zero() {
         return Err(ContractError::NotRegistered {});

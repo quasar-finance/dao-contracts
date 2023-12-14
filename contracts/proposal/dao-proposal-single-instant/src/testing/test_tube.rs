@@ -3,7 +3,7 @@ pub mod test_tube {
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::testing::mock_dependencies;
-    use cosmwasm_std::{to_binary, Api, Coin, Uint128};
+    use cosmwasm_std::{to_binary, Api, BankMsg, Coin, CosmosMsg, Uint128};
     use cw_utils::Duration;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
     use dao_interface::state::Admin;
@@ -11,7 +11,11 @@ pub mod test_tube {
     use dao_voting::pre_propose::PreProposeInfo;
     use dao_voting::threshold::Threshold;
     use dao_voting_cw4::msg::GroupContract;
-    use osmosis_test_tube::Account;
+    use osmosis_test_tube::osmosis_std::types::cosmos::bank::v1beta1::{
+        MsgSend, QueryBalanceRequest,
+    };
+    use osmosis_test_tube::osmosis_std::types::cosmos::base::v1beta1;
+    use osmosis_test_tube::{Account, Bank};
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
     use sha2::{Digest, Sha256};
     use std::collections::HashMap;
@@ -24,7 +28,8 @@ pub mod test_tube {
     const SLUG_DAO_PROPOSAL_SINGLE_INSTANT: &str = "dao_proposal_single_instant";
 
     /// Test constants
-    const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
+    const INITIAL_BALANCE_AMOUNT: u128 = 1000000000000u128;
+    // const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
 
     pub fn test_init(
         voters_number: u32,
@@ -41,7 +46,10 @@ pub mod test_tube {
         // Create new admin account with initial funds
         // The contract admin, to be used during store code.
         let admin: SigningAccount = app
-            .init_account(&[Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo")])
+            .init_account(&[
+                Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo"),
+                Coin::new(INITIAL_BALANCE_AMOUNT, "ugov"),
+            ])
             .unwrap();
 
         // Create voters accounts with initial funds
@@ -128,8 +136,7 @@ pub mod test_tube {
                             //     threshold: PercentageThreshold,
                             //     quorum: PercentageThreshold,
                             // },
-                            // max_voting_period: Duration::Time(0), // 0 seconds
-                            max_voting_period: Duration::Height(1), // 0 blocks
+                            max_voting_period: Duration::Height(1), // 1 block only to make it expire after the proposing block
                             min_voting_period: None,
                             only_members_execute: false, // TODO
                             allow_revoting: false,
@@ -223,6 +230,7 @@ pub mod test_tube {
     #[ignore]
     fn test_dao_proposal_single_instant_ok() {
         let (app, contracts, admin, voters) = test_init(5);
+        let bank = Bank::new(&app);
         let wasm = Wasm::new(&app);
 
         // Creating different messages for each voter.
@@ -254,10 +262,33 @@ pub mod test_tube {
             }
         }
 
-        // TODO: Do Admin send from admin to treasury
-        // TODO: Get Admin balance before
+        // Get Admin balance before
+        let admin_balance_before = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: "ugov".to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        println!("admin_balance_before: {:?}", admin_balance_before);
 
-        // TODO: Do mock bank message from treasury to admin account
+        // Execute bank send from admin to treasury
+        bank.send(
+            MsgSend {
+                from_address: admin.address(),
+                to_address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                amount: vec![v1beta1::Coin {
+                    denom: "ugov".to_string(),
+                    amount: "1000".to_string(),
+                }],
+            },
+            &admin,
+        )
+        .unwrap();
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
         let _execute_propose_resp = wasm
@@ -266,8 +297,17 @@ pub mod test_tube {
                 &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
-                    msgs: vec![], // TODO: Mock a simple bank transfer that in prod will be the trigger exec to the middleware contract
-                    proposer: None, // TODO: Some(admin.address()) is causing "pre-propose modules must specify a proposer. lacking one, no proposer should be specified: execute wasm contract failed"
+                    msgs: vec![
+                        // Create proposal execute msg as bank message from treasury back to the admin account
+                        CosmosMsg::Bank(BankMsg::Send {
+                            to_address: admin.address(),
+                            amount: vec![Coin {
+                                denom: "ugov".to_string(),
+                                amount: Uint128::new(1000u128),
+                            }],
+                        }),
+                    ],
+                    proposer: None,
                     vote_signatures,
                 }),
                 &vec![],
@@ -275,13 +315,33 @@ pub mod test_tube {
             )
             .unwrap();
 
-        // TODO: Assert Admin balance after = (before + transfer_amount)
+        // Wait some blocks
+        app.increase_time(10000);
+
+        // TODO: Assert something with _execute_propose_resp
+        // assert!(_execute_propose_resp);
+
+        // Get Admin balance after send
+        let admin_balance_after = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: "ugov".to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+
+        println!("admin_balance_after: {:?}", admin_balance_after);
+
+        // TODO: Assert balance is right
+        assert!(admin_balance_after.amount == admin_balance_before.amount);
 
         // TODO: Assert proposal status after (closed, executed, deposit refunded, etc)
     }
 
     #[test]
     #[ignore]
+    /// Test case that fails due to tie in message_hash_majority computation by voting_power.
     fn test_dao_proposal_single_instant_ko_tie() {
         let (app, contracts, admin, voters) = test_init(5);
         let wasm = Wasm::new(&app);
@@ -289,11 +349,11 @@ pub mod test_tube {
         // Creating different messages for each voter.
         // The number of items of this array should match the test_init({voters_number}) value.
         let messages: Vec<&[u8]> = vec![
-            b"Hello World!0",
-            b"Hello World!1",
-            b"Hello World!2",
-            b"Hello World!3",
-            b"Hello World!4",
+            b"Hello World! 0",
+            b"Hello World! 1",
+            b"Hello World! 2",
+            b"Hello World! 3",
+            b"Hello World! 4",
             // ... add as many messages as there are voters
         ];
 
@@ -343,6 +403,7 @@ pub mod test_tube {
 
     #[test]
     #[ignore]
+    /// Test case that fails due to not enough vote_signatures i.e. sent 1 out of 2 minimum required by quorum confirutaion.
     fn test_dao_proposal_single_instant_ko_quorum() {
         let (app, contracts, admin, voters) = test_init(1);
         let wasm = Wasm::new(&app);
