@@ -223,7 +223,7 @@ pub mod test_tube {
     #[test]
     #[ignore]
     fn test_dao_proposal_single_instant() {
-        let (app, contracts, admin, voters) = test_init(1);
+        let (app, contracts, admin, voters) = test_init(5);
         let wasm = Wasm::new(&app);
 
         // TODO: Mock signatures taking voter.publickey to recover the sig
@@ -271,38 +271,26 @@ pub mod test_tube {
 
     #[test]
     #[ignore]
-    fn test_secp256k1_recover_pubkey() {
-        //TODO: Adapt this test to be working with the verify
-
-        let (_app, _contracts, _admin, voters) = test_init(1);
+    fn test_secp256k1_verify() {
+        let (_app, _contracts, _admin, voters) = test_init(100);
         let deps = mock_dependencies();
 
         for voter in voters {
-            let pub_key = voter.public_key();
-
-            println!("Voter Public Key: {:?}", pub_key);
-            println!("Public Key Bytes: {:?}", pub_key.to_bytes());
-            println!("Public Key Address: {:?}", voter.address());
-
-            // Ref for message sample data,
-            // https://gist.github.com/webmaster128/130b628d83621a33579751846699ed15
-
+            let public_key = voter.public_key();
             let clear_message = b"Hello World";
-            let hash_result = compute_sha256_hash(clear_message);
+            let message_hash = compute_sha256_hash(clear_message);
             let signature = voter.signing_key().sign(clear_message).unwrap();
 
-            let recovered_pubkey = deps
+            let verified = deps
                 .api
-                .secp256k1_recover_pubkey(hash_result.as_slice(), signature.as_ref(), 0u8)
-                .expect("Failed to recover public key");
+                .secp256k1_verify(
+                    message_hash.as_slice(),
+                    signature.as_ref(),
+                    public_key.to_bytes().as_ref(),
+                )
+                .expect("Invalid signature");
 
-            println!("Recovered Public Key: {:?}", recovered_pubkey);
-            println!(
-                "Recovered Address: {:?}",
-                derive_addr_from_pubkey(&recovered_pubkey, "osmo")
-            );
-
-            assert_eq!(recovered_pubkey.as_slice(), pub_key.to_bytes());
+            assert!(verified == true);
         }
     }
 }
