@@ -16,8 +16,8 @@ use bech32::ToBase32;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_binary, to_vec, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order,
-    Reply, Response, StdResult, Storage, SubMsg, Uint128, WasmMsg, Attribute,
+    to_binary, to_vec, Addr, Attribute, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
+    Order, Reply, Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
 };
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
 use cw4::MemberListResponse;
