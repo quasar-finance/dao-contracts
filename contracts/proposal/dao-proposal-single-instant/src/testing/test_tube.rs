@@ -299,7 +299,10 @@ pub mod test_tube {
             .unwrap()
             .balance
             .expect("failed to query balance");
-
+        let admin_balance_after = admin_balance_after_send.amount.parse::<u128>().expect("Failed to parse after balance");
+        let admin_balance_before = admin_balance_before.amount.parse::<u128>().expect("Failed to parse before balance");
+        assert!(admin_balance_after == admin_balance_before - bank_send_amount);
+        
         // Get treasury balance after send
         let treasury_balance_after_send = bank
             .query_balance(&QueryBalanceRequest {
@@ -312,9 +315,11 @@ pub mod test_tube {
             .unwrap()
             .balance
             .expect("failed to query balance");
+        let treasury_balance_after = treasury_balance_after_send.amount.parse::<u128>().expect("Failed to parse after balance");
+        assert!(treasury_balance_after == bank_send_amount);
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
-        let execute_propose_resp = wasm
+        let _execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
                 &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
@@ -329,8 +334,10 @@ pub mod test_tube {
             )
             .unwrap();
 
+        // TODO: Assert votes, execution and proposal status from response attributes.
+
         // Get Admin balance after proposal
-        let admin_balance_after = bank
+        let admin_balance_after_proposal = bank
             .query_balance(&QueryBalanceRequest {
                 address: admin.address(),
                 denom: INITIAL_BALANCE_DENOM.to_string(),
@@ -338,24 +345,8 @@ pub mod test_tube {
             .unwrap()
             .balance
             .expect("failed to query balance");
-
-        // Get treasury balance after send
-        let treasury_balance_after = bank
-            .query_balance(&QueryBalanceRequest {
-                address: contracts
-                    .get(SLUG_DAO_DAO_CORE)
-                    .expect("Treasury address not found")
-                    .clone(),
-                denom: INITIAL_BALANCE_DENOM.to_string(),
-            })
-            .unwrap()
-            .balance
-            .expect("failed to query balance");
-
-        // Assert balance is right
-        assert!(admin_balance_after.amount == admin_balance_before.amount);
-
-        // TODO: Assert proposal status after (closed, executed, deposit refunded, etc)
+        let admin_balance_after = admin_balance_after_proposal.amount.parse::<u128>().expect("Failed to parse after balance");
+        assert!(admin_balance_after == admin_balance_before);
     }
 
     // #[test]

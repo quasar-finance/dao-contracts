@@ -196,18 +196,14 @@ pub fn execute_proposal_hook(
     sender: Addr,
     msgs: Vec<CosmosMsg<Empty>>,
 ) -> Result<Response, ContractError> {
-    deps.api.debug("execute_proposal_hook start!");
-    deps.api.debug(format!("msgs {:?}", msgs).as_str());
     let module = PROPOSAL_MODULES
         .may_load(deps.storage, sender.clone())?
         .ok_or(ContractError::Unauthorized {})?;
-    deps.api.debug(format!("module {:?}", module).as_str());
 
     // Check that the message has come from an active module
     if module.status != ProposalModuleStatus::Enabled {
         return Err(ContractError::ModuleDisabledCannotExecute { address: sender });
     }
-    deps.api.debug("execute_proposal_hook before return!");
 
     Ok(Response::default()
         .add_attribute("action", "execute_proposal_hook")
