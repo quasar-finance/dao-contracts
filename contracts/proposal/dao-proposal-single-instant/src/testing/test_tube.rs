@@ -272,24 +272,23 @@ pub mod test_tube {
             .unwrap()
             .balance
             .expect("failed to query balance");
-        println!("admin_balance_before: {:?}", admin_balance_before);
 
         // Execute bank send from admin to treasury
-        bank
-            .send(
-                MsgSend {
-                    from_address: admin.address(),
-                    to_address: contracts
-                        .get(SLUG_DAO_DAO_CORE)
-                        .expect("Treasury address not found")
-                        .clone(),
-                    amount: vec![v1beta1::Coin {
-                        denom: INITIAL_BALANCE_DENOM.to_string(),
-                        amount: bank_send_amount.to_string(),
-                    }],
-                },
-                &admin,
-            ).unwrap();
+        bank.send(
+            MsgSend {
+                from_address: admin.address(),
+                to_address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                amount: vec![v1beta1::Coin {
+                    denom: INITIAL_BALANCE_DENOM.to_string(),
+                    amount: bank_send_amount.to_string(),
+                }],
+            },
+            &admin,
+        )
+        .unwrap();
 
         // Get Admin balance after send
         let admin_balance_after_send = bank
@@ -300,7 +299,6 @@ pub mod test_tube {
             .unwrap()
             .balance
             .expect("failed to query balance");
-        println!("admin_balance_after_send: {:?}", admin_balance_after_send);
 
         // Get treasury balance after send
         let treasury_balance_after_send = bank
@@ -314,10 +312,6 @@ pub mod test_tube {
             .unwrap()
             .balance
             .expect("failed to query balance");
-        println!(
-            "treasury_balance_after_send: {:?}",
-            treasury_balance_after_send
-        );
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
         let execute_propose_resp = wasm
@@ -334,10 +328,6 @@ pub mod test_tube {
                 &admin,
             )
             .unwrap();
-        println!("execute_propose_resp: {:?}", execute_propose_resp);
-
-        // TODO: Assert something with _execute_propose_resp
-        // assert!(_execute_propose_resp);
 
         // Get Admin balance after proposal
         let admin_balance_after = bank
@@ -348,8 +338,6 @@ pub mod test_tube {
             .unwrap()
             .balance
             .expect("failed to query balance");
-
-        println!("admin_balance_after: {:?}", admin_balance_after);
 
         // Get treasury balance after send
         let treasury_balance_after = bank
@@ -363,12 +351,8 @@ pub mod test_tube {
             .unwrap()
             .balance
             .expect("failed to query balance");
-        println!(
-            "treasury_balance_after_proposal: {:?}",
-            treasury_balance_after
-        );
 
-        // TODO: Assert balance is right
+        // Assert balance is right
         assert!(admin_balance_after.amount == admin_balance_before.amount);
 
         // TODO: Assert proposal status after (closed, executed, deposit refunded, etc)

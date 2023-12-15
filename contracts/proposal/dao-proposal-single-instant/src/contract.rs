@@ -17,7 +17,7 @@ use bech32::ToBase32;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_binary, to_vec, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order,
-    Reply, Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
+    Reply, Response, StdResult, Storage, SubMsg, Uint128, WasmMsg, Attribute,
 };
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
 use cw4::MemberListResponse;
@@ -332,6 +332,9 @@ pub fn execute_propose(
         },
     )?;
 
+    let mut p_vote_attributes = vec![];
+    let mut p_vote_messages = vec![];
+
     // verify and cast votes
     for vote_signature in &vote_signatures {
         let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo")?;
@@ -360,7 +363,7 @@ pub fn execute_propose(
 
             // Call proposal_vote only if vote_option is not None
             if let Some(vote) = vote {
-                proposal_vote(
+                let mut p_vote = proposal_vote(
                     deps.branch(),
                     env.clone(),
                     info.clone(),
@@ -369,6 +372,8 @@ pub fn execute_propose(
                     vote,
                     None, // rationale hardcoded to None
                 )?;
+                p_vote_attributes.append(p_vote.attributes.as_mut());
+                p_vote_messages.append(p_vote.messages.as_mut());
             }
         } else {
             // Do nothing, skip this iteration and continue. We didn't recognize the address on members list.
@@ -387,9 +392,13 @@ pub fn execute_propose(
     }
 
     // Execute the proposal
-    proposal_execute(deps.branch(), env, info.clone(), id)?;
+    let p_execute = proposal_execute(deps.branch(), env, info.clone(), id)?;
 
     Ok(Response::default()
+        .add_attributes(p_vote_attributes)
+        .add_submessages(p_vote_messages)
+        .add_attributes(p_execute.attributes)
+        .add_submessages(p_execute.messages)
         .add_submessages(hooks)
         .add_attribute("action", "propose")
         .add_attribute("sender", info.sender)
@@ -568,8 +577,6 @@ fn proposal_execute(
 
     let response = {
         if !prop.msgs.is_empty() {
-            deps.api
-                .debug(format!("prop.msgs {:?}", prop.msgs).as_str());
             let execute_message = WasmMsg::Execute {
                 contract_addr: config.dao.to_string(),
                 msg: to_binary(&dao_interface::msg::ExecuteMsg::ExecuteProposalHook {
@@ -579,8 +586,6 @@ fn proposal_execute(
             };
             match config.close_proposal_on_execution_failure {
                 true => {
-                    deps.api
-                        .debug(format!("execute_message {:?}", execute_message).as_str());
                     let masked_proposal_id = mask_proposal_execution_proposal_id(proposal_id);
                     Response::default()
                         .add_submessage(SubMsg::reply_on_error(execute_message, masked_proposal_id))
@@ -621,9 +626,7 @@ fn proposal_execute(
             hooks
         }
     };
-    deps.api.debug(format!("hooks {:?}", hooks).as_str());
 
-    deps.api.debug(format!("response {:?}", response).as_str());
     Ok(response
         .add_submessages(hooks)
         .add_attribute("action", "execute")
