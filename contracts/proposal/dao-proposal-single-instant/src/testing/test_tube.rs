@@ -101,55 +101,56 @@ pub mod test_tube {
 
         // Instantiate contract and sub-contracts
         // https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
+        let vote_module_instantiate_msg = dao_voting_cw4::msg::InstantiateMsg {
+            group_contract: GroupContract::New {
+                cw4_group_code_id: *code_ids.get(SLUG_CW4_GROUP).unwrap(),
+                initial_members,
+            },
+        };
+        let prop_module_instantiate_msg = InstantiateMsg {
+            threshold: Threshold::AbsoluteCount {
+                threshold: Uint128::new(2u128),
+            },
+            // TODO: Create an additional test variant as below
+            // threshold: Threshold::ThresholdQuorum {
+            //     threshold: PercentageThreshold,
+            //     quorum: PercentageThreshold,
+            // },
+            max_voting_period: Duration::Height(1), // 1 block only to make it expire after the proposing block
+            min_voting_period: None,
+            only_members_execute: true,
+            allow_revoting: false,
+            pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
+            close_proposal_on_execution_failure: true,
+        };
+        let dao_dao_core_instantiate_msg = InstantiateMsgCore {
+            admin: Some(admin.address()),
+            name: "DAO DAO Core".to_string(),
+            description: "".to_string(),
+            image_url: None,
+            automatically_add_cw20s: true,
+            automatically_add_cw721s: true,
+            proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
+                code_id: *code_ids.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
+                msg: to_binary(&prop_module_instantiate_msg).unwrap(),
+                admin: Some(Admin::CoreModule {}),
+                funds: vec![],
+                label: "DAO DAO governance module".to_string(),
+            }],
+            voting_module_instantiate_info: ModuleInstantiateInfo {
+                code_id: *code_ids.get(SLUG_DAO_VOTING_CW4).unwrap(),
+                msg: to_binary(&vote_module_instantiate_msg).unwrap(),
+                admin: Some(Admin::CoreModule {}),
+                funds: vec![],
+                label: "DAO DAO voting module".to_string(),
+            },
+            initial_items: None,
+            dao_uri: None,
+        };
         let dao_dao_core_instantiate_resp = wasm
             .instantiate(
                 *code_ids.get(SLUG_DAO_DAO_CORE).unwrap(),
-                &InstantiateMsgCore {
-                    admin: Some(admin.address()),
-                    name: "DAO DAO Core".to_string(),
-                    description: "".to_string(),
-                    image_url: None,
-                    automatically_add_cw20s: true,
-                    automatically_add_cw721s: true,
-                    voting_module_instantiate_info: ModuleInstantiateInfo {
-                        code_id: *code_ids.get(SLUG_DAO_VOTING_CW4).unwrap(),
-                        msg: to_binary(&dao_voting_cw4::msg::InstantiateMsg {
-                            group_contract: GroupContract::New {
-                                cw4_group_code_id: *code_ids.get(SLUG_CW4_GROUP).unwrap(),
-                                initial_members,
-                            },
-                        })
-                        .unwrap(),
-                        admin: Some(Admin::CoreModule {}),
-                        funds: vec![],
-                        label: "DAO DAO voting module".to_string(),
-                    },
-                    proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
-                        code_id: *code_ids.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
-                        msg: to_binary(&InstantiateMsg {
-                            threshold: Threshold::AbsoluteCount {
-                                threshold: Uint128::new(2u128),
-                            },
-                            // TODO: Create an additional test variant as below
-                            // threshold: Threshold::ThresholdQuorum {
-                            //     threshold: PercentageThreshold,
-                            //     quorum: PercentageThreshold,
-                            // },
-                            max_voting_period: Duration::Height(1), // 1 block only to make it expire after the proposing block
-                            min_voting_period: None,
-                            only_members_execute: false,
-                            allow_revoting: false,
-                            pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
-                            close_proposal_on_execution_failure: true,
-                        })
-                        .unwrap(),
-                        admin: Some(Admin::CoreModule {}),
-                        funds: vec![],
-                        label: "DAO DAO governance module".to_string(),
-                    }],
-                    initial_items: None,
-                    dao_uri: None,
-                },
+                &dao_dao_core_instantiate_msg,
                 Some(admin.address().as_str()),
                 Some(SLUG_DAO_DAO_CORE),
                 vec![].as_ref(),
