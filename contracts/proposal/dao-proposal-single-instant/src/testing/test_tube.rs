@@ -412,22 +412,30 @@ pub mod test_tube {
                 }),
                 &vec![],
                 &admin,
-            )
-            .unwrap();
-        // TODO: Assert error called `Result::unwrap()` on an `Err` value: ExecuteError { msg: "failed to execute message; message index: 0: Not possible to reach required (passing) threshold: execute wasm contract failed" }
+            );
+
+         match _execute_propose_resp {
+            Ok(_) => panic!("Expected an error for not reaching the threshold, but the operation succeeded"),
+            Err(e) => {
+                // Check if the error is the expected one
+                let error_message = format!("{:?}", e);
+                assert!(error_message.contains("Not possible to reach required (passing) threshold"), "Unexpected error message: {}", error_message);
+            }
+        }
     }
 
     #[test]
     #[ignore]
     /// TODO: Test case of a proposal failing due to not be reaching the minimum members quorum.
     fn test_dao_proposal_single_instant_ko_not_quorum() {
-        let (app, contracts, admin, voters) = test_init(1);
+        let (app, contracts, admin, voters) = test_init(2);
         let wasm = Wasm::new(&app);
 
         // Creating different messages for each voter.
         // The number of items of this array should match the test_init({voters_number}) value.
         let messages: Vec<&[u8]> = vec![
             b"Hello World!", // only one vote when 2 is required on test_init() fixture
+            b"Hello World!",
         ];
 
         let mut vote_signatures: Vec<VoteSignature> = vec![];
