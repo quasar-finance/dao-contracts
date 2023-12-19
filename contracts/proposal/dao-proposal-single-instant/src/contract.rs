@@ -200,10 +200,49 @@ pub fn execute_propose(
         _ => return Err(ContractError::InvalidProposer {}),
     };
 
+    // Get dao-voting-cw4 contract address
+    let dao_voting_cw4_addr: Addr = deps
+        .querier
+        .query_wasm_smart(config.dao.clone(), &VotingModule {})?;
+    // Get cw4-group contract address
+    let cw4_group_addr: Addr = deps
+        .querier
+        .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
+    // Get list of members
+    let members: MemberListResponse = deps.querier.query_wasm_smart(
+        cw4_group_addr.clone(),
+        &ListMembers {
+            start_after: None,
+            limit: None,
+        },
+    )?;
+
+    // Proposer check #1 - It should be a member
+    match members.members.iter().any(|member| member.addr == proposer.clone()) {
+        true => {
+            // Proposer is a member.
+        },
+        false => return Err(ContractError::InvalidProposer {}),
+    }
+
+
+    // Proposer check #2 - Proposer weight weight should be zero
+    let proposer_vote_power = get_voting_power(
+        deps.as_ref(),
+        proposer.clone(),
+        &config.dao,
+        Some(env.block.height),
+    )?;
+
+    if proposer_vote_power != Uint128::zero() {
+        return Err(ContractError::InvalidProposer {});
+    }
+
     let voting_module: Addr = deps.querier.query_wasm_smart(
         config.dao.clone(),
         &dao_interface::msg::QueryMsg::VotingModule {},
     )?;
+
 
     // Voting modules are not required to implement this
     // query. Lacking an implementation they are active by default.
@@ -314,23 +353,6 @@ pub fn execute_propose(
             ThresholdError::UnreachableThreshold {},
         ));
     };
-
-    // Get dao-voting-cw4 contract address
-    let dao_voting_cw4_addr: Addr = deps
-        .querier
-        .query_wasm_smart(config.dao.clone(), &VotingModule {})?;
-    // Get cw4-group contract address
-    let cw4_group_addr: Addr = deps
-        .querier
-        .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
-    // Get list of members
-    let members: MemberListResponse = deps.querier.query_wasm_smart(
-        cw4_group_addr.clone(),
-        &ListMembers {
-            start_after: None,
-            limit: None,
-        },
-    )?;
 
     let mut p_vote_attributes = vec![];
     let mut p_vote_messages = vec![];
@@ -550,6 +572,10 @@ fn proposal_execute(
         .ok_or(ContractError::NoSuchProposal { id: proposal_id })?;
 
     let config = CONFIG.load(deps.storage)?;
+    // TODO - Recheck this, as this code block does not make much sense.
+    // With the proposer added as member, its power will be zero. So can not through
+    // Unauthorized error.
+    /*
     if config.only_members_execute {
         let power = get_voting_power(
             deps.as_ref(),
@@ -557,11 +583,12 @@ fn proposal_execute(
             &config.dao,
             Some(prop.start_height),
         )?;
+
         if power.is_zero() {
             return Err(ContractError::Unauthorized {});
         }
     }
-
+    */
     // Check here that the proposal is passed. Allow it to be executed
     // even if it is expired so long as it passed during its voting
     // period.

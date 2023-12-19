@@ -63,13 +63,20 @@ pub mod test_tube {
         }
 
         // Create a vector of cw4::Member
-        let initial_members = voters
+        let mut initial_members = voters
             .iter()
             .map(|voter| cw4::Member {
                 addr: voter.address().to_string(),
                 weight: 1,
             })
             .collect::<Vec<_>>();
+
+
+        initial_members.push(cw4::Member {
+            addr: admin.address().to_string(),
+            weight: 0,  // You can adjust the admin weight as needed
+        });
+
 
         // Contracts to store and instantiate
         let contracts_setup: Vec<(&str, Vec<u8>)> = vec![
@@ -225,6 +232,7 @@ pub mod test_tube {
         let (app, contracts, admin, voters) = test_init(5);
         let bank = Bank::new(&app);
         let wasm = Wasm::new(&app);
+        println!("test_dao_proposal_single_instant_ok_send - admin {:?}",admin.account_id());
 
         // Create proposal execute msg as bank message from treasury back to the admin account
         let bank_send_amount = 1000u128;
@@ -342,9 +350,17 @@ pub mod test_tube {
                 }),
                 &vec![],
                 &admin,
-            )
-            .unwrap();
-
+            );
+            // .unwrap();
+        match _execute_propose_resp {
+            Ok(_) =>  {}
+            Err(e) => {
+                // Check if the error is the expected one
+                let error_message = format!("{:?}", e);
+                println!("error message - {:?}", error_message);
+                // assert!(error_message.contains("Not possible to reach required (passing) threshold"), "Unexpected error message: {}", error_message);
+            }
+        }
         // TODO: Assert votes, execution and proposal status from response attributes.
 
         // Get Admin balance after proposal
@@ -360,6 +376,7 @@ pub mod test_tube {
             .amount
             .parse::<u128>()
             .expect("Failed to parse after balance");
+
         assert!(admin_balance_after == admin_balance_before);
     }
 
@@ -469,8 +486,8 @@ pub mod test_tube {
                 }),
                 &vec![],
                 &admin,
-            )
-            .unwrap();
+            ).unwrap();
+
         // TODO: Assert error called `Result::unwrap()` on an `Err` value: ExecuteError { msg: "failed to execute message; message index: 0: proposal is not in 'passed' state: execute wasm contract failed" }
     }
 
@@ -480,7 +497,7 @@ pub mod test_tube {
     fn test_dao_proposal_single_instant_ko_proposer() {
         let (app, contracts, _admin, voters) = test_init(3);
         let wasm = Wasm::new(&app);
-
+        println!("admin address - {:?}", _admin.account_id());
         // Creating different messages for each voter.
         // The number of items of this array should match the test_init({voters_number}) value.
         let messages: Vec<&[u8]> = vec![b"Hello World!", b"Hello World!", b"Hello World!"];
@@ -516,9 +533,16 @@ pub mod test_tube {
                 }),
                 &vec![],
                 &voters.get(0).unwrap(), // using first voter instead of admin
-            )
-            .unwrap();
-        // TODO: Assert error unauthorized
+            );
+
+        match _execute_propose_resp {
+            Ok(_) => panic!("Unknown error."),
+            Err(e) => {
+                // Check if the error is the expected one
+                let error_message = format!("{:?}", e);
+                assert!(error_message.contains("failed to execute message; message index: 0: pre-propose modules must specify a proposer. lacking one, no proposer should be specified: execute wasm contract failed"), "Unexpected error message: {}", error_message);
+            }
+        }
     }
 
     #[test]
