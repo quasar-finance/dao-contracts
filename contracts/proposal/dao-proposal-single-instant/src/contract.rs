@@ -1,36 +1,6 @@
-use std::collections::HashMap;
-
-use cosmwasm_crypto::secp256k1_recover_pubkey;
-#[cfg(not(feature = "library"))]
-use cosmwasm_std::entry_point;
-use cosmwasm_std::{
-    to_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order, Reply,
-    Response, StdResult, Storage, SubMsg, WasmMsg,
-};
-
-use cw2::{get_contract_version, set_contract_version, ContractVersion};
-use cw4::MemberListResponse;
-use cw4_group::msg::QueryMsg::ListMembers;
-use cw_hooks::Hooks;
-use cw_proposal_single_v1 as v1;
-use cw_storage_plus::Bound;
-use cw_utils::{parse_reply_instantiate_data, Duration};
-use dao_hooks::proposal::{new_proposal_hooks, proposal_status_changed_hooks};
-use dao_hooks::vote::new_vote_hooks;
-use dao_interface::voting::IsActiveResponse;
-use dao_voting::pre_propose::{PreProposeInfo, ProposalCreationPolicy};
-use dao_voting::proposal::{DEFAULT_LIMIT, MAX_PROPOSAL_SIZE};
-use dao_voting::reply::{
-    failed_pre_propose_module_hook_id, mask_proposal_execution_proposal_id, TaggedReplyId,
-};
-use dao_voting::status::Status;
-use dao_voting::threshold::Threshold;
-use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
-
 use crate::msg::{MigrateMsg, SingleChoiceInstantProposeMsg};
-use crate::proposal::{next_proposal_id, SingleChoiceProposal};
+use crate::proposal::{next_proposal_id, SingleChoiceInstantPropose};
 use crate::state::{Config, VoteSignature, CREATION_POLICY};
-
 use crate::v1_state::{
     v1_duration_to_v2, v1_expiration_to_v2, v1_status_to_v2, v1_threshold_to_v2, v1_votes_to_v2,
 };
@@ -42,8 +12,39 @@ use crate::{
     query::{ProposalResponse, VoteInfo, VoteListResponse, VoteResponse},
     state::{Ballot, BALLOTS, CONFIG, PROPOSALS, PROPOSAL_COUNT, PROPOSAL_HOOKS, VOTE_HOOKS},
 };
+use bech32::ToBase32;
+#[cfg(not(feature = "library"))]
+use cosmwasm_std::entry_point;
+use cosmwasm_std::{
+    to_binary, to_vec, Addr, Attribute, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
+    Order, Reply, Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
+};
+use cw2::{get_contract_version, set_contract_version, ContractVersion};
+use cw4::MemberListResponse;
+use cw4_group::msg::QueryMsg::ListMembers;
+use cw_hooks::Hooks;
+use cw_proposal_single_v1 as v1;
+use cw_storage_plus::Bound;
+use cw_utils::{parse_reply_instantiate_data, Duration};
+use dao_hooks::proposal::{new_proposal_hooks, proposal_status_changed_hooks};
+use dao_hooks::vote::new_vote_hooks;
+use dao_interface::msg::QueryMsg::VotingModule;
+use dao_interface::voting::IsActiveResponse;
+use dao_voting::pre_propose::{PreProposeInfo, ProposalCreationPolicy};
+use dao_voting::proposal::{DEFAULT_LIMIT, MAX_PROPOSAL_SIZE};
+use dao_voting::reply::{
+    failed_pre_propose_module_hook_id, mask_proposal_execution_proposal_id, TaggedReplyId,
+};
+use dao_voting::status::Status;
+use dao_voting::threshold::{Threshold, ThresholdError};
+use dao_voting::voting::{get_total_power, get_voting_power, validate_voting_period, Vote, Votes};
+use dao_voting_cw4::msg::QueryMsg::GroupContract;
+use ripemd::{Digest as RipDigest, Ripemd160};
+use sha2::Sha256;
+use std::collections::HashMap;
+use std::convert::TryInto;
 
-pub(crate) const CONTRACT_NAME: &str = "crates.io:dao-proposal-singlet";
+pub(crate) const CONTRACT_NAME: &str = "crates.io:dao-proposal-single-instant";
 pub(crate) const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Message type used for firing hooks to this module's pre-propose
@@ -105,18 +106,21 @@ pub fn execute(
             description,
             msgs,
             proposer,
-            votes,
-        }) => execute_propose(deps, env, info, title, description, msgs, proposer, votes),
-        // ExecuteMsg::Vote {
-        //     proposal_id,
-        //     vote,
-        //     rationale,
-        // } => execute_vote(deps, env, info, proposal_id, vote, rationale),
+            vote_signatures,
+        }) => execute_propose(
+            deps,
+            env,
+            info,
+            title,
+            description,
+            msgs,
+            proposer,
+            vote_signatures,
+        ),
         ExecuteMsg::UpdateRationale {
             proposal_id,
             rationale,
         } => execute_update_rationale(deps, info, proposal_id, rationale),
-        //ExecuteMsg::Execute { proposal_id } => execute_execute(deps, env, info, proposal_id),
         ExecuteMsg::Close { proposal_id } => execute_close(deps, env, info, proposal_id),
         ExecuteMsg::UpdateConfig {
             threshold,
@@ -171,10 +175,17 @@ pub fn execute_propose(
         return Err(ContractError::Unauthorized {});
     }
 
+    // MVP Limitation: Supporting only one msg per proposal
+    if msgs.len() > 1 {
+        return Err(ContractError::TooManyMsgs {});
+    }
+
     // TODO: We need a permissioned proposer, probably the admin of the ProposalModule
     // so we can avoid Verifiers to be hitting the entrypoint skipping our API
     // This could be a security issue if we use Threshold::AbsoluteCount { threshold: 1 } as config param
     // Also pre_propose modules and hooks would be relevant in this context
+
+    // TODO: We want to avoid further execution if vote_signatures is lower than the required quorum amount or we will fail during execution due to not in 'passed' state.
 
     // Determine the appropriate proposer. If this is coming from our
     // pre-propose module, it must be specified. Otherwise, the
@@ -211,7 +222,7 @@ pub fn execute_propose(
 
     let proposal = {
         // Limit mutability to this block.
-        let mut proposal = SingleChoiceProposal {
+        let mut proposal = SingleChoiceInstantPropose {
             title,
             description,
             proposer: proposer.clone(),
@@ -220,7 +231,7 @@ pub fn execute_propose(
             expiration,
             threshold: config.threshold,
             total_power,
-            msgs,
+            msgs: msgs.clone(),
             status: Status::Open,
             votes: Votes::zero(),
             allow_revoting: config.allow_revoting,
@@ -256,96 +267,138 @@ pub fn execute_propose(
 
     PROPOSALS.save(deps.storage, id, &proposal)?;
 
-    // TODO: Check if this requires tweaking
     let hooks = new_proposal_hooks(PROPOSAL_HOOKS, deps.storage, id, proposer.as_str())?;
 
-    // TODO: Get list of members to check signatures against them
-    let members: MemberListResponse = deps.querier.query_wasm_smart(
-        Addr::unchecked("todo_take_cw4_group_address"),
-        &ListMembers {
-            start_after: None, // TODO: CHeck if Some() needed
-            limit: None,       // TODO: CHeck if Some() needed
-        },
-    )?;
+    // Init empty message hash majority counts, this will be filled with message hashes and their accrued voting power
+    let mut message_hash_counts: HashMap<Vec<u8>, Uint128> = HashMap::new();
 
-    // As we are passing message_hash and signature tuples, we should be able to always recover the correct publicKey.
-    // Given this assumption we should previously check what the majority says leveraging the clear message_hash.
-    let mut message_hash_counts: HashMap<&[u8], u32> = HashMap::new();
-    for vote_signature in vote_signatures {
+    // sum vote counts based on member weight / voting power
+    for vote_signature in &vote_signatures {
+        let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo").unwrap();
+
+        let vote_power = get_voting_power(
+            deps.as_ref(),
+            Addr::unchecked(voter_address),
+            &config.dao,
+            Some(proposal.start_height),
+        )?;
+
         *message_hash_counts
-            .entry(vote_signature.message_hash.as_ref())
-            .or_insert(0) += 1;
+            .entry(vote_signature.message_hash.clone())
+            .or_insert(Uint128::zero()) += vote_power;
     }
 
-    // TODO: document this block
-    let message_hash_majority: &[u8] = if let Some(max_count) = message_hash_counts.values().max() {
-        let max_count_hashes: Vec<&[u8]> = message_hash_counts
+    // Determine the message hash with the highest accumulated voting power
+    let message_hash_majority: Vec<u8> = if let Some((_, &max_weight)) = message_hash_counts
+        .iter()
+        .max_by_key(|&(_, &weight)| weight)
+    {
+        let max_power_hashes: Vec<Vec<u8>> = message_hash_counts
             .iter()
-            .filter(|&(_, &count)| count == *max_count)
-            .map(|(&hash, _)| hash)
+            .filter(|&(_, &weight)| weight == max_weight)
+            .map(|(hash, _)| hash.clone()) // Clone the Vec<u8> here
             .collect();
 
-        if max_count_hashes.len() > 1 {
+        if max_power_hashes.len() > 1 {
             // Handle the error case where there is a tie
-            return Err(ContractError::InactiveDao {}); // TODO: Create specificerrorType
+            return Err(ContractError::ThresholdError(
+                ThresholdError::UnreachableThreshold {},
+            ));
         } else {
             // Return message_hash_majority value
-            max_count_hashes[0]
+            max_power_hashes.into_iter().next().unwrap_or_default()
         }
     } else {
         // Handle the case where there are no votes
-        return Err(ContractError::InactiveDao {}); // TODO: Create specific errorType
+        return Err(ContractError::ThresholdError(
+            ThresholdError::UnreachableThreshold {},
+        ));
     };
 
-    // TODO: Foreach signature (vote) received
-    for vote_signature in vote_signatures {
-        // TODO: Compute vote using cosmwasm_crypto crate as in the POC, but against this module's state such as members
-        let pubkey_result =
-            secp256k1_recover_pubkey(&vote_signature.message_hash, &vote_signature.signature, 1u8); // TODO: remove hardcoded 1u8
+    // Get dao-voting-cw4 contract address
+    let dao_voting_cw4_addr: Addr = deps
+        .querier
+        .query_wasm_smart(config.dao.clone(), &VotingModule {})?;
+    // Get cw4-group contract address
+    let cw4_group_addr: Addr = deps
+        .querier
+        .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
+    // Get list of members
+    let members: MemberListResponse = deps.querier.query_wasm_smart(
+        cw4_group_addr.clone(),
+        &ListMembers {
+            start_after: None,
+            limit: None,
+        },
+    )?;
 
-        let mut vote: Option<Vote> = None;
-        match pubkey_result {
-            Ok(pubkey) => {
-                let address = pubkey_to_address(&pubkey);
+    let mut p_vote_attributes = vec![];
+    let mut p_vote_messages = vec![];
 
-                if members.members.iter().any(|member| member.addr == address) {
-                    // Members has been found
-                    // TODO: Compute yes or no vote based on majority previous computed.
-                    vote = Some(if vote_signature.message_hash == message_hash_majority {
-                        Vote::Yes
-                    } else {
-                        Vote::No
-                    });
-                } else {
-                    // TODO: Skip this iteration and continue
-                }
+    // verify and cast votes
+    for vote_signature in &vote_signatures {
+        let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo")?;
+        let verified = deps
+            .api
+            .secp256k1_verify(
+                vote_signature.message_hash.as_slice(),
+                vote_signature.signature.as_slice(),
+                vote_signature.public_key.as_slice(),
+            )
+            .unwrap();
+
+        // If Signature has been verified and a Member address has been found
+        if verified
+            && members
+                .members
+                .iter()
+                .any(|member| member.addr == voter_address)
+        {
+            // Compute yes or no vote based on majority previous computed.
+            let vote = Some(if vote_signature.message_hash == message_hash_majority {
+                Vote::Yes
+            } else {
+                Vote::No
+            });
+
+            // Call proposal_vote only if vote_option is not None
+            if let Some(vote) = vote {
+                let mut p_vote = proposal_vote(
+                    deps.branch(),
+                    env.clone(),
+                    info.clone(),
+                    id,
+                    Addr::unchecked(voter_address),
+                    vote,
+                    None, // rationale hardcoded to None
+                )?;
+                p_vote_attributes.append(p_vote.attributes.as_mut());
+                p_vote_messages.append(p_vote.messages.as_mut());
             }
-            Err(_) => {
-                // Handle error, log or push to invalid
-            }
-        }
-
-        // TODO: Rationale (optional). Deprecate this or hardcode it to "".tostring()
-        let rationale = Some("I'm voting because this is cool!".to_string());
-
-        // TODO: Implement proposal_vote()
-        // Call proposal_vote only if vote_option is not None
-        if let Some(vote) = vote {
-            proposal_vote(
-                deps.branch(),
-                env.clone(),
-                info.clone(),
-                id,
-                vote,
-                rationale,
-            )?;
+        } else {
+            // Do nothing, skip this iteration and continue. We didn't recognize the address on members list.
+            continue;
         }
     }
 
-    // TODO: Implement proposal_execute()
-    proposal_execute(deps.branch(), env, info.clone(), id)?;
+    // Validate messages to execute are matching the message_hash_majority
+    if let Some(proposal_msg) = msgs.get(0) {
+        let proposal_msg_bytes = to_vec(proposal_msg)?;
+        let proposal_msg_hash = compute_sha256_hash(&proposal_msg_bytes);
+
+        if proposal_msg_hash != message_hash_majority {
+            return Err(ContractError::MessageHashMismatch {});
+        }
+    }
+
+    // Execute the proposal
+    let p_execute = proposal_execute(deps.branch(), env, info.clone(), id)?;
 
     Ok(Response::default()
+        .add_attributes(p_vote_attributes)
+        .add_submessages(p_vote_messages)
+        .add_attributes(p_execute.attributes)
+        .add_submessages(p_execute.messages)
         .add_submessages(hooks)
         .add_attribute("action", "propose")
         .add_attribute("sender", info.sender)
@@ -353,17 +406,35 @@ pub fn execute_propose(
         .add_attribute("status", proposal.status.to_string()))
 }
 
-// TODO: Move this to helpers.rs
-fn pubkey_to_address(pubkey: &[u8]) -> Addr {
-    Addr::unchecked(String::from_utf8_lossy(pubkey).to_string())
+// todo: Find a better place for this method which is an helper function.
+pub fn compute_sha256_hash(message: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(message);
+    hasher.finalize().to_vec()
 }
 
-// TODO: Move this to proposal.rs::impl block
+// todo: Find a better place for this method which is an helper function.
+pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
+    let sha_hash: [u8; 32] = Sha256::digest(pub_key)
+        .as_slice()
+        .try_into()
+        .map_err(|_| ContractError::WrongLength {})?;
+
+    let rip_hash = Ripemd160::digest(sha_hash);
+    let rip_slice: &[u8] = rip_hash.as_slice();
+
+    let addr: String = bech32::encode(hrp, rip_slice.to_base32(), bech32::Variant::Bech32)
+        .map_err(|_| ContractError::VerificationFailed {})?;
+    Ok(addr)
+}
+
+// todo: Find a better place for this method that has been downcasted from entrypoint to private method.
 fn proposal_vote(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
     proposal_id: u64,
+    voter_address: Addr,
     vote: Vote,
     rationale: Option<String>,
 ) -> Result<Response, ContractError> {
@@ -383,48 +454,53 @@ fn proposal_vote(
         return Err(ContractError::Expired { id: proposal_id });
     }
 
-    // TODO: We should inject the sender instead taking it from info, recovered with message_hash and signature uint8arrays
+    // we use voter_address instead of using info.sender
     let vote_power = get_voting_power(
         deps.as_ref(),
-        info.sender.clone(),
+        voter_address.clone(),
         &config.dao,
         Some(prop.start_height),
     )?;
+
     if vote_power.is_zero() {
         return Err(ContractError::NotRegistered {});
     }
 
-    BALLOTS.update(deps.storage, (proposal_id, &info.sender), |bal| match bal {
-        Some(current_ballot) => {
-            if prop.allow_revoting {
-                if current_ballot.vote == vote {
-                    // Don't allow casting the same vote more than
-                    // once. This seems liable to be confusing
-                    // behavior.
-                    Err(ContractError::AlreadyCast {})
+    BALLOTS.update(
+        deps.storage,
+        (proposal_id, &voter_address),
+        |bal| match bal {
+            Some(current_ballot) => {
+                if prop.allow_revoting {
+                    if current_ballot.vote == vote {
+                        // Don't allow casting the same vote more than
+                        // once. This seems liable to be confusing
+                        // behavior.
+                        Err(ContractError::AlreadyCast {})
+                    } else {
+                        // Remove the old vote if this is a re-vote.
+                        prop.votes
+                            .remove_vote(current_ballot.vote, current_ballot.power);
+                        Ok(Ballot {
+                            power: vote_power,
+                            vote,
+                            // Roll over the previous rationale. If
+                            // you're changing your vote, you've also
+                            // likely changed your thinking.
+                            rationale: rationale.clone(),
+                        })
+                    }
                 } else {
-                    // Remove the old vote if this is a re-vote.
-                    prop.votes
-                        .remove_vote(current_ballot.vote, current_ballot.power);
-                    Ok(Ballot {
-                        power: vote_power,
-                        vote,
-                        // Roll over the previous rationale. If
-                        // you're changing your vote, you've also
-                        // likely changed your thinking.
-                        rationale: rationale.clone(),
-                    })
+                    Err(ContractError::AlreadyVoted {})
                 }
-            } else {
-                Err(ContractError::AlreadyVoted {})
             }
-        }
-        None => Ok(Ballot {
-            power: vote_power,
-            vote,
-            rationale: rationale.clone(),
-        }),
-    })?;
+            None => Ok(Ballot {
+                power: vote_power,
+                vote,
+                rationale: rationale.clone(),
+            }),
+        },
+    )?;
 
     let old_status = prop.status;
 
@@ -446,7 +522,7 @@ fn proposal_vote(
         VOTE_HOOKS,
         deps.storage,
         proposal_id,
-        info.sender.to_string(),
+        voter_address.to_string(),
         vote.to_string(),
     )?;
 
@@ -455,13 +531,14 @@ fn proposal_vote(
         .add_submessages(vote_hooks)
         .add_attribute("action", "vote")
         .add_attribute("sender", info.sender)
+        .add_attribute("voter_address", voter_address)
         .add_attribute("proposal_id", proposal_id.to_string())
         .add_attribute("position", vote.to_string())
         .add_attribute("rationale", rationale.as_deref().unwrap_or("_none"))
         .add_attribute("status", prop.status.to_string()))
 }
 
-// TODO: Move this to proposal.rs::impl block
+// todo: Find a better place for this method that has been downcasted from entrypoint to private method.
 fn proposal_execute(
     deps: DepsMut,
     env: Env,
@@ -872,7 +949,7 @@ pub fn query_list_proposals(
     let props: Vec<ProposalResponse> = PROPOSALS
         .range(deps.storage, min, None, cosmwasm_std::Order::Ascending)
         .take(limit as usize)
-        .collect::<Result<Vec<(u64, SingleChoiceProposal)>, _>>()?
+        .collect::<Result<Vec<(u64, SingleChoiceInstantPropose)>, _>>()?
         .into_iter()
         .map(|(id, proposal)| proposal.into_response(&env.block, id))
         .collect();
@@ -891,7 +968,7 @@ pub fn query_reverse_proposals(
     let props: Vec<ProposalResponse> = PROPOSALS
         .range(deps.storage, None, max, cosmwasm_std::Order::Descending)
         .take(limit as usize)
-        .collect::<Result<Vec<(u64, SingleChoiceProposal)>, _>>()?
+        .collect::<Result<Vec<(u64, SingleChoiceInstantPropose)>, _>>()?
         .into_iter()
         .map(|(id, proposal)| proposal.into_response(&env.block, id))
         .collect();
@@ -1017,7 +1094,7 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, Co
                         return Err(ContractError::PendingProposals {});
                     }
 
-                    let migrated_proposal = SingleChoiceProposal {
+                    let migrated_proposal = SingleChoiceInstantPropose {
                         title: prop.title,
                         description: prop.description,
                         proposer: prop.proposer,

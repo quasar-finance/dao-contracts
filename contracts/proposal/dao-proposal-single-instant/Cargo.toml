@@ -20,7 +20,6 @@ library = []
 cosmwasm-std = { workspace = true, features = ["ibc3"] }
 cosmwasm-storage = { workspace = true }
 cosmwasm-schema = { workspace = true }
-cosmwasm-crypto = "1.5.0" # added for single-instant
 cw-storage-plus = { workspace = true }
 cw-utils = { workspace = true }
 cw2 = { workspace = true }
@@ -29,23 +28,25 @@ cw3 = { workspace = true }
 cw4 = { workspace = true }
 cw4-group = { workspace = true }
 thiserror = { workspace = true }
-
+dao-voting-cw4 = { workspace = true } # moved for single-instant
 dao-dao-macros = { workspace = true }
 dao-pre-propose-base = { workspace = true }
 dao-interface = { workspace = true }
 dao-voting = { workspace = true }
 cw-hooks = { workspace = true }
 dao-hooks = { workspace = true }
-
 cw-utils-v1 = { workspace = true}
 voting-v1 = { workspace = true }
 cw-proposal-single-v1 = { workspace = true, features = ["library"] }
+sha2 = { version = "0.10.7", features = [] }
+ripemd = "0.1.1" # this could be deprecated by using sha2 only
+bech32 = "0.9.0"
 
 [dev-dependencies]
+cosmrs = { workspace = true }
 cosmwasm-schema = { workspace = true }
 cw-multi-test = { workspace = true }
 dao-dao-core = { workspace = true }
-dao-voting-cw4 = { workspace = true }
 dao-voting-cw20-balance = { workspace = true }
 dao-voting-cw20-staked = { workspace = true }
 dao-voting-token-staked = { workspace = true }

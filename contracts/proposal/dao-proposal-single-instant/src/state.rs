@@ -5,15 +5,17 @@ use cw_storage_plus::{Item, Map};
 use cw_utils::Duration;
 use dao_voting::{pre_propose::ProposalCreationPolicy, threshold::Threshold, voting::Vote};
 
-use crate::proposal::SingleChoiceProposal;
+use crate::proposal::SingleChoiceInstantPropose;
 
 /// A vote cast for an instant proposal containing message_hash and message_signature.
 #[cw_serde]
 pub struct VoteSignature {
     /// Message hash
-    pub message_hash: Vec<u8>, // TODO: Check lifetime
+    pub message_hash: Vec<u8>,
     /// Signature of message hash
-    pub signature: Vec<u8>, // TODO: Check lifetime
+    pub signature: Vec<u8>,
+    /// Signature of message hash
+    pub public_key: Vec<u8>,
 }
 
 /// A vote cast for a proposal.
@@ -71,7 +73,7 @@ pub struct Config {
 pub const CONFIG: Item<Config> = Item::new("config_v2");
 /// The number of proposals that have been created.
 pub const PROPOSAL_COUNT: Item<u64> = Item::new("proposal_count");
-pub const PROPOSALS: Map<u64, SingleChoiceProposal> = Map::new("proposals_v2");
+pub const PROPOSALS: Map<u64, SingleChoiceInstantPropose> = Map::new("proposals_v2");
 pub const BALLOTS: Map<(u64, &Addr), Ballot> = Map::new("ballots");
 /// Consumers of proposal state change hooks.
 pub const PROPOSAL_HOOKS: Hooks = Hooks::new("proposal_hooks");

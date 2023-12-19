@@ -1,26 +1,42 @@
 #[cfg(test)]
 pub mod test_tube {
-    use std::collections::HashMap;
-
-    use cosmwasm_std::{Binary, Coin};
-    use dao_interface::state::Admin;
-    // use cw_utils::Duration;
-    use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
-    use dao_interface::state::ModuleInstantiateInfo;
-    // use dao_voting::pre_propose::PreProposeInfo;
-    // use dao_voting::threshold::Threshold;
-    use crate::msg::SingleChoiceInstantProposeMsg;
+    use crate::contract::compute_sha256_hash;
+    use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
     use crate::state::VoteSignature;
-    use osmosis_test_tube::Account;
+    use cosmwasm_std::testing::mock_dependencies;
+    use cosmwasm_std::{to_binary, Api, BankMsg, Coin, CosmosMsg, Uint128};
+    use cw_utils::Duration;
+    use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
+    use dao_interface::state::Admin;
+    use dao_interface::state::ModuleInstantiateInfo;
+    use dao_voting::pre_propose::PreProposeInfo;
+    use dao_voting::threshold::Threshold;
+    use dao_voting_cw4::msg::GroupContract;
+    use osmosis_test_tube::osmosis_std::types::cosmos::bank::v1beta1::{
+        MsgSend, QueryBalanceRequest,
+    };
+    use osmosis_test_tube::osmosis_std::types::cosmos::base::v1beta1;
+    use osmosis_test_tube::{Account, Bank};
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
 
-    const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
+    /// Init constants
+    const SLUG_DAO_DAO_CORE: &str = "dao_dao_core";
+    const SLUG_CW4_GROUP: &str = "cw4_group";
+    const SLUG_DAO_VOTING_CW4: &str = "dao_voting_cw4";
+    const SLUG_DAO_PROPOSAL_SINGLE_INSTANT: &str = "dao_proposal_single_instant";
+
+    /// Test constants
+    const INITIAL_BALANCE_AMOUNT: u128 = 1_000_000_000_000_000u128;
+    const INITIAL_BALANCE_DENOM: &str = "ugov";
+    // const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
 
     pub fn test_init(
         voters_number: u32,
     ) -> (
         OsmosisTestApp,
-        HashMap<&'static str, &'static str>,
+        HashMap<&'static str, String>,
         SigningAccount,
         Vec<SigningAccount>,
     ) {
@@ -28,12 +44,16 @@ pub mod test_tube {
         let app = OsmosisTestApp::new();
         let wasm = Wasm::new(&app);
 
-        // Create new account with initial funds
+        // Create new admin account with initial funds
+        // The contract admin, to be used during store code.
         let admin: SigningAccount = app
-            .init_account(&[Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo")])
+            .init_account(&[
+                Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo"),
+                Coin::new(INITIAL_BALANCE_AMOUNT, INITIAL_BALANCE_DENOM),
+            ])
             .unwrap();
 
-        // Create voters accounts
+        // Create voters accounts with initial funds
         let mut voters: Vec<SigningAccount> = vec![];
         for _ in 0..voters_number {
             voters.push(
@@ -42,31 +62,33 @@ pub mod test_tube {
             )
         }
 
-        // TODO: Check if more contracts are required to be isntantiated to have a minimal working environment for our purpose
+        // Create a vector of cw4::Member
+        let initial_members = voters
+            .iter()
+            .map(|voter| cw4::Member {
+                addr: voter.address().to_string(),
+                weight: 1,
+            })
+            .collect::<Vec<_>>();
 
         // Contracts to store and instantiate
-        let contracts_setup: Vec<(&str, &str)> = vec![
+        let contracts_setup: Vec<(&str, Vec<u8>)> = vec![
             (
-                "dao-voting",
-                "./test-tube-build/wasm32-unknown-unknown/release/dao_voting.wasm", // TODO
+                SLUG_CW4_GROUP,
+                get_wasm_byte_code(SLUG_CW4_GROUP), // this is copy pasted from outside as this workspace if not creating this artifact. it has been taken from https://github.com/CosmWasm/cw-plus/tree/v1.1.0
             ),
+            (SLUG_DAO_VOTING_CW4, get_wasm_byte_code(SLUG_DAO_VOTING_CW4)),
             (
-                "dao-proposal-single-instant",
-                "./test-tube-build/wasm32-unknown-unknown/release/dao_proposal_single_instant.wasm", // TODO
+                SLUG_DAO_PROPOSAL_SINGLE_INSTANT,
+                get_wasm_byte_code(SLUG_DAO_PROPOSAL_SINGLE_INSTANT),
             ),
-            (
-                "dao-dao-core",
-                "./test-tube-build/wasm32-unknown-unknown/release/dao_dao_core.wasm", // TODO
-            ),
+            (SLUG_DAO_DAO_CORE, get_wasm_byte_code(SLUG_DAO_DAO_CORE)),
         ];
 
         // Store contracts and declare a HashMap
         let code_ids: HashMap<&str, u64> = contracts_setup
             .iter()
-            .map(|&(contract_name, file_name)| {
-                let wasm_byte_code = std::fs::read(file_name)
-                    .expect(format!("Failed to read file: {}", file_name).as_str());
-
+            .map(|&(contract_name, ref wasm_byte_code)| {
                 let code_id = wasm
                     .store_code(&wasm_byte_code, None, &admin)
                     .expect("Failed to store code")
@@ -77,189 +99,450 @@ pub mod test_tube {
             })
             .collect();
 
-        // HashMap to store contract names and their addresses
-        let mut contracts: HashMap<&str, &str> = HashMap::new();
-
-        // TODO: START INSTANTIATION
-
-        // TODO: Remove, this instantiation is not needed. As long as the code_id exists after storing it, we will instantiate this during dao-dao-core inst
-        // // Voting
-        // let dao_voting_contract = wasm
-        //     .instantiate(
-        //         *code_ids.get("dao-voting").unwrap(),
-        //         &todo!(),
-        //         Some(admin.address().as_str()),
-        //         Some("dao-voting"),
-        //         vec![].as_ref(),
-        //         &admin,
-        //     )
-        //     .unwrap();
-        // contracts.insert("dao-voting", dao_voting_contract.data.address.as_str());
-
-        // TODO: Remove, this instantiation is not needed. As long as the code_id exists after storing it, we will instantiate this during dao-dao-core inst
-        // Proposal
-        // let dao_proposal_contract = wasm
-        //     .instantiate(
-        //         *code_ids.get("dao-proposal-single-instant").unwrap(),
-        //         &InstantiateMsgSingleChoiceInstant {
-        //             threshold: Threshold::AbsoluteCount {
-        //                 threshold: Uint128::new(1u128),
-        //             },
-        //             // TODO: Create an additional test variant as below
-        //             // threshold: Threshold::ThresholdQuorum {
-        //             //     threshold: PercentageThreshold,
-        //             //     quorum: PercentageThreshold,
-        //             // },
-        //             max_voting_period: Duration::Time(0), // 0 seconds
-        //             min_voting_period: None,
-        //             only_members_execute: true,
-        //             allow_revoting: false,
-        //             pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
-        //             close_proposal_on_execution_failure: true,
-        //         },
-        //         Some(admin.address().as_str()),
-        //         Some("dao-proposal-single-instant"),
-        //         vec![].as_ref(),
-        //         &admin,
-        //     )
-        //     .unwrap();
-        // contracts.insert(
-        //     "dao-proposal-single-instant",
-        //     dao_proposal_contract.data.address.as_str(),
-        // );
-
-        // TODO: Create msgs as defined here -> https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
-        // We should use structs and serde to serialize it to json, and then to base64
-
-        // {
-        //   "cw4_group_code_id": 434,
-        //   "initial_members": [
-        //     {
-        //       "addr": "osmo1account0admin", <- this should be constructed dynamically based on ^ test configs
-        //       "weight": 0 <- notice admin with 0 voting power, but it needs to be a members to be able to propose
-        //     },
-        //     {
-        //       "addr": "osmo1account1", <- this should be constructed dynamically based on ^ test configs
-        //       "weight": 1
-        //     },
-        //     {
-        //       "addr": "osmo1account2", <- this should be constructed dynamically based on ^ test configs
-        //       "weight": 1
-        //     },
-        //     {
-        //       "addr": "osmo1account3", <- this should be constructed dynamically based on ^ test configs
-        //       "weight": 1
-        //     },
-        //   ]
-        // }
-        let dao_voting_instantiate_msg = todo!();
-
-        // {
-        //   "allow_revoting":true,
-        //   "max_voting_period":{
-        //     "time":432000
-        //   },
-        //   "only_members_execute":true,
-        //   "threshold":{
-        //     "absolute_count":{
-        //       "threshold":"6"
-        //     }
-        //   }
-        // }
-        let dao_proposal_instantiate_msg = todo!();
-
-        // Core
-        let dao_dao_core = wasm
+        // Instantiate contract and sub-contracts
+        // https://github.com/DA0-DA0/dao-contracts/wiki/Instantiating-a-DAO#proposal-module-instantiate-message
+        let vote_module_instantiate_msg = dao_voting_cw4::msg::InstantiateMsg {
+            group_contract: GroupContract::New {
+                cw4_group_code_id: *code_ids.get(SLUG_CW4_GROUP).unwrap(),
+                initial_members,
+            },
+        };
+        let prop_module_instantiate_msg = InstantiateMsg {
+            threshold: Threshold::AbsoluteCount {
+                threshold: Uint128::new(2u128),
+            },
+            // TODO: Create an additional test variant as below
+            // threshold: Threshold::ThresholdQuorum {
+            //     threshold: PercentageThreshold,
+            //     quorum: PercentageThreshold,
+            // },
+            max_voting_period: Duration::Height(1), // 1 block only to make it expire after the proposing block
+            min_voting_period: None,
+            only_members_execute: true,
+            allow_revoting: false,
+            pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
+            close_proposal_on_execution_failure: true,
+        };
+        let dao_dao_core_instantiate_msg = InstantiateMsgCore {
+            admin: Some(admin.address()),
+            name: "DAO DAO Core".to_string(),
+            description: "".to_string(),
+            image_url: None,
+            automatically_add_cw20s: true,
+            automatically_add_cw721s: true,
+            proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
+                code_id: *code_ids.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
+                msg: to_binary(&prop_module_instantiate_msg).unwrap(),
+                admin: Some(Admin::CoreModule {}),
+                funds: vec![],
+                label: "DAO DAO governance module".to_string(),
+            }],
+            voting_module_instantiate_info: ModuleInstantiateInfo {
+                code_id: *code_ids.get(SLUG_DAO_VOTING_CW4).unwrap(),
+                msg: to_binary(&vote_module_instantiate_msg).unwrap(),
+                admin: Some(Admin::CoreModule {}),
+                funds: vec![],
+                label: "DAO DAO voting module".to_string(),
+            },
+            initial_items: None,
+            dao_uri: None,
+        };
+        let dao_dao_core_instantiate_resp = wasm
             .instantiate(
-                *code_ids.get("dao-dao-core").unwrap(),
-                &InstantiateMsgCore {
-                    admin: Some(admin.address()),
-                    name: "DAO DAO Core".to_string(),
-                    description: "".to_string(),
-                    image_url: None,
-                    automatically_add_cw20s: true,
-                    automatically_add_cw721s: true,
-                    voting_module_instantiate_info: ModuleInstantiateInfo {
-                        code_id: *code_ids.get("dao-voting").unwrap(),
-                        msg: Binary::from(dao_voting_instantiate_msg),
-                        admin: Some(Admin::Address {
-                            addr: admin.address(),
-                        }),
-                        funds: vec![],
-                        label: "dao-voting".to_string(),
-                    },
-                    proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
-                        code_id: *code_ids.get("dao-proposal-single-instant").unwrap(),
-                        msg: Binary::from(dao_proposal_instantiate_msg),
-                        admin: Some(Admin::Address {
-                            addr: admin.address(),
-                        }),
-                        funds: vec![],
-                        label: "dao-proposal-single-instant".to_string(),
-                    }],
-                    initial_items: None,
-                    dao_uri: None,
-                },
+                *code_ids.get(SLUG_DAO_DAO_CORE).unwrap(),
+                &dao_dao_core_instantiate_msg,
                 Some(admin.address().as_str()),
-                Some("dao-dao-core"),
+                Some(SLUG_DAO_DAO_CORE),
                 vec![].as_ref(),
                 &admin,
             )
             .unwrap();
-        contracts.insert("dao-dao-core", dao_dao_core.data.address.as_str());
 
-        // TODO: END INSTANTIATION
+        // HashMap to store contract names and their addresses
+        let mut contracts: HashMap<&str, String> = HashMap::new();
 
-        // TODO: Ensure memberships are created as specified
-        // For example:
-        // - Proposers: admin, weight 0
-        // - Voters: voters foreach, weight 1
+        for event in dao_dao_core_instantiate_resp.events {
+            if event.ty == "wasm" {
+                for attr in event.attributes {
+                    match attr.key.as_str() {
+                        "_contract_address" => {
+                            contracts
+                                .entry(SLUG_DAO_DAO_CORE)
+                                .or_insert_with(|| attr.value.clone());
+                        }
+                        "voting_module" => {
+                            contracts
+                                .entry(SLUG_DAO_VOTING_CW4)
+                                .or_insert_with(|| attr.value.clone());
+                        }
+                        "prop_module" => {
+                            contracts
+                                .entry(SLUG_DAO_PROPOSAL_SINGLE_INSTANT)
+                                .or_insert_with(|| attr.value.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        // TODO: Assert that we have the required n. of contracts here, as the ^ nested for match could fail
+
+        // Increase app time or members will not have any voting power assigned
+        app.increase_time(10000);
 
         (app, contracts, admin, voters)
     }
 
+    fn get_wasm_byte_code(filename: &str) -> Vec<u8> {
+        let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let byte_code = std::fs::read(
+            manifest_path
+                .join("..")
+                .join("..")
+                .join("..")
+                .join("artifacts")
+                .join(format!("{}.wasm", filename)),
+        );
+        match byte_code {
+            Ok(byte_code) => byte_code,
+            // On arm processors, the above path is not found, so we try the following path
+            Err(_) => std::fs::read(
+                manifest_path
+                    .join("..")
+                    .join("..")
+                    .join("..")
+                    .join("artifacts")
+                    .join(format!("{}-aarch64.wasm", filename)),
+            )
+            .unwrap(),
+        }
+    }
+
     #[test]
     #[ignore]
-    fn test_dao_proposal_single_instant() {
-        let (app, contracts, admin, voters) = test_init(3);
+    /// Test case of a proposal creation, voting passing and executing all-in-once, which should move gov funds from treasury.
+    fn test_dao_proposal_single_instant_ok_send() {
+        let (app, contracts, admin, voters) = test_init(5);
+        let bank = Bank::new(&app);
         let wasm = Wasm::new(&app);
 
-        // TODO: Mock signatures taking voter.publickey to recover the sig
+        // Create proposal execute msg as bank message from treasury back to the admin account
+        let bank_send_amount = 1000u128;
+        let execute_propose_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: admin.address(),
+            amount: vec![Coin {
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+                amount: Uint128::new(bank_send_amount),
+            }],
+        });
+        let execute_propose_msg_binary = to_binary(&execute_propose_msg).unwrap();
+
+        // Creating different messages for each voter.
+        // ... add as many messages as there are voters
+        // The number of items of this array should match the test_init({voters_number}) value.
+        let messages: Vec<&[u8]> = vec![
+            execute_propose_msg_binary.as_slice(), // A <- will pass!
+            execute_propose_msg_binary.as_slice(), // A <- will pass!
+            execute_propose_msg_binary.as_slice(), // A <- will pass!
+            b"Hello World!",                       // B
+            b"Hello World!",                       // B
+        ];
+
         let mut vote_signatures: Vec<VoteSignature> = vec![];
-        for voter in voters {
-            // Dummy message
-            let msg: &[u8] = "Hello World!".as_bytes();
-            // VoteSignature
-            vote_signatures.push(VoteSignature {
-                message_hash: msg,
-                signature: voter.signing_key().sign(msg).unwrap().as_ref(),
-            })
+        for (index, voter) in voters.iter().enumerate() {
+            // Ensure that there's a message for each voter
+            if let Some(clear_message) = messages.get(index) {
+                let message_hash = compute_sha256_hash(clear_message);
+                let signature = voter.signing_key().sign(clear_message).unwrap();
+                // VoteSignature
+                vote_signatures.push(VoteSignature {
+                    message_hash,
+                    signature: signature.as_ref().to_vec(),
+                    public_key: voter.public_key().to_bytes(),
+                });
+            } else {
+                // Do nothing in the case where there's no message for a voter
+            }
         }
 
+        // Get Admin balance before send
+        let admin_balance_before = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+
+        // Execute bank send from admin to treasury
+        bank.send(
+            MsgSend {
+                from_address: admin.address(),
+                to_address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                amount: vec![v1beta1::Coin {
+                    denom: INITIAL_BALANCE_DENOM.to_string(),
+                    amount: bank_send_amount.to_string(),
+                }],
+            },
+            &admin,
+        )
+        .unwrap();
+
+        // Get Admin balance after send
+        let admin_balance_after_send = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        let admin_balance_after = admin_balance_after_send
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse after balance");
+        let admin_balance_before = admin_balance_before
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse before balance");
+        assert!(admin_balance_after == admin_balance_before - bank_send_amount);
+
+        // Get treasury balance after send
+        let treasury_balance_after_send = bank
+            .query_balance(&QueryBalanceRequest {
+                address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        let treasury_balance_after = treasury_balance_after_send
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse after balance");
+        assert!(treasury_balance_after == bank_send_amount);
+
         // Execute execute_propose (proposal, voting and execution in one single workflow)
-        let execute_propose_resp = wasm
+        let _execute_propose_resp = wasm
             .execute(
-                contracts.get("dao-proposal-single-instant").unwrap(),
-                &SingleChoiceInstantProposeMsg {
+                contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
+                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
-                    msgs: vec![], // TODO: Mock a simple bank transfer that in prod will be the trigger exec to the middleware contract
-                    proposer: Some(admin.address()),
-                    votes: vec![],
-                },
+                    msgs: vec![execute_propose_msg],
+                    proposer: None,
+                    vote_signatures,
+                }),
                 &vec![],
                 &admin,
             )
             .unwrap();
 
-        // TODO: Query things from contract to make assertions
-        // let resp = wasm
-        //     .query::<QueryMsg, PoolResponse>(
-        //         contract_address.as_str(),
-        //         &QueryMsg::VaultExtension(ExtensionQueryMsg::ConcentratedLiquidity(
-        //             ClQueryMsg::Pool {},
-        //         )),
-        //     )
-        //     .unwrap();
+        // TODO: Assert votes, execution and proposal status from response attributes.
+
+        // Get Admin balance after proposal
+        let admin_balance_after_proposal = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        let admin_balance_after = admin_balance_after_proposal
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse after balance");
+        assert!(admin_balance_after == admin_balance_before);
+    }
+
+    #[test]
+    #[ignore]
+    /// TODO: Test case of a proposal failing due to a tie in message_hash_majority computation by voting_power.
+    fn test_dao_proposal_single_instant_ko_tie() {
+        let (app, contracts, admin, voters) = test_init(5);
+        let wasm = Wasm::new(&app);
+
+        // Creating different messages for each voter.
+        // The number of items of this array should match the test_init({voters_number}) value.
+        let messages: Vec<&[u8]> = vec![
+            b"Hello World! 0",
+            b"Hello World! 1",
+            b"Hello World! 2",
+            b"Hello World! 3",
+            b"Hello World! 4",
+            // ... add as many messages as there are voters
+        ];
+
+        let mut vote_signatures: Vec<VoteSignature> = vec![];
+        for (index, voter) in voters.iter().enumerate() {
+            // Ensure that there's a message for each voter
+            if let Some(clear_message) = messages.get(index) {
+                let message_hash = compute_sha256_hash(clear_message);
+                let signature = voter.signing_key().sign(clear_message).unwrap();
+
+                // VoteSignature
+                vote_signatures.push(VoteSignature {
+                    message_hash,
+                    signature: signature.as_ref().to_vec(),
+                    public_key: voter.public_key().to_bytes(),
+                });
+            } else {
+                // Do nothing in the case where there's no message for a voter
+            }
+        }
+
+        // Execute execute_propose (proposal, voting and execution in one single workflow)
+        let _execute_propose_resp = wasm
+            .execute(
+                contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
+                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+                    title: "Title".to_string(),
+                    description: "Description".to_string(),
+                    msgs: vec![],
+                    proposer: None,
+                    vote_signatures,
+                }),
+                &vec![],
+                &admin,
+            );
+
+         match _execute_propose_resp {
+            Ok(_) => panic!("Expected an error for not reaching the threshold, but the operation succeeded"),
+            Err(e) => {
+                // Check if the error is the expected one
+                let error_message = format!("{:?}", e);
+                assert!(error_message.contains("Not possible to reach required (passing) threshold"), "Unexpected error message: {}", error_message);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    /// TODO: Test case of a proposal failing due to not be reaching the minimum members quorum.
+    fn test_dao_proposal_single_instant_ko_not_quorum() {
+        let (app, contracts, admin, voters) = test_init(2);
+        let wasm = Wasm::new(&app);
+
+        // Creating different messages for each voter.
+        // The number of items of this array should match the test_init({voters_number}) value.
+        let messages: Vec<&[u8]> = vec![
+            b"Hello World!", // only one vote when 2 is required on test_init() fixture
+            b"Hello World!",
+        ];
+
+        let mut vote_signatures: Vec<VoteSignature> = vec![];
+        for (index, voter) in voters.iter().enumerate() {
+            // Ensure that there's a message for each voter
+            if let Some(clear_message) = messages.get(index) {
+                let message_hash = compute_sha256_hash(clear_message);
+                let signature = voter.signing_key().sign(clear_message).unwrap();
+
+                // VoteSignature
+                vote_signatures.push(VoteSignature {
+                    message_hash,
+                    signature: signature.as_ref().to_vec(),
+                    public_key: voter.public_key().to_bytes(),
+                });
+            } else {
+                // Do nothing in the case where there's no message for a voter
+            }
+        }
+
+        // Execute execute_propose (proposal, voting and execution in one single workflow)
+        let _execute_propose_resp = wasm
+            .execute(
+                contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
+                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+                    title: "Title".to_string(),
+                    description: "Description".to_string(),
+                    msgs: vec![],
+                    proposer: None,
+                    vote_signatures,
+                }),
+                &vec![],
+                &admin,
+            )
+            .unwrap();
+        // TODO: Assert error called `Result::unwrap()` on an `Err` value: ExecuteError { msg: "failed to execute message; message index: 0: proposal is not in 'passed' state: execute wasm contract failed" }
+    }
+
+    #[test]
+    #[ignore]
+    /// TODO: Test case of a proposal failing due to be proposed by the a member of the same validator set, without passing trough the 0 voting power proposer role.
+    fn test_dao_proposal_single_instant_ko_proposer() {
+        let (app, contracts, _admin, voters) = test_init(3);
+        let wasm = Wasm::new(&app);
+
+        // Creating different messages for each voter.
+        // The number of items of this array should match the test_init({voters_number}) value.
+        let messages: Vec<&[u8]> = vec![b"Hello World!", b"Hello World!", b"Hello World!"];
+
+        let mut vote_signatures: Vec<VoteSignature> = vec![];
+        for (index, voter) in voters.iter().enumerate() {
+            // Ensure that there's a message for each voter
+            if let Some(clear_message) = messages.get(index) {
+                let message_hash = compute_sha256_hash(clear_message);
+                let signature = voter.signing_key().sign(clear_message).unwrap();
+
+                // VoteSignature
+                vote_signatures.push(VoteSignature {
+                    message_hash,
+                    signature: signature.as_ref().to_vec(),
+                    public_key: voter.public_key().to_bytes(),
+                });
+            } else {
+                // Do nothing in the case where there's no message for a voter
+            }
+        }
+
+        // Execute execute_propose (proposal, voting and execution in one single workflow)
+        let _execute_propose_resp = wasm
+            .execute(
+                contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
+                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+                    title: "Title".to_string(),
+                    description: "Description".to_string(),
+                    msgs: vec![],
+                    proposer: None,
+                    vote_signatures,
+                }),
+                &vec![],
+                &voters.get(0).unwrap(), // using first voter instead of admin
+            )
+            .unwrap();
+        // TODO: Assert error unauthorized
+    }
+
+    #[test]
+    #[ignore]
+    fn test_secp256k1_verify() {
+        let (_app, _contracts, _admin, voters) = test_init(100);
+        let deps = mock_dependencies();
+
+        for voter in voters {
+            let public_key = voter.public_key();
+            let clear_message = b"Hello World";
+            let message_hash = compute_sha256_hash(clear_message);
+            let signature = voter.signing_key().sign(clear_message).unwrap();
+
+            let verified = deps
+                .api
+                .secp256k1_verify(
+                    message_hash.as_slice(),
+                    signature.as_ref(),
+                    public_key.to_bytes().as_ref(),
+                )
+                .expect("Invalid signature");
+
+            assert!(verified == true);
+        }
     }
 }

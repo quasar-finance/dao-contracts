@@ -20,6 +20,12 @@ pub enum ContractError {
     #[error("unauthorized")]
     Unauthorized {},
 
+    #[error("too many msgs")]
+    TooManyMsgs {},
+
+    #[error("majority execute message hash mismatch")]
+    MessageHashMismatch {},
+
     #[error(transparent)]
     ThresholdError(#[from] dao_voting::threshold::ThresholdError),
 
@@ -89,4 +95,10 @@ pub enum ContractError {
 
     #[error("can not migrate. current version is up to date")]
     AlreadyMigrated {},
+
+    #[error("Wrong length")]
+    WrongLength {},
+
+    #[error("Verification failed")]
+    VerificationFailed {},
 }
