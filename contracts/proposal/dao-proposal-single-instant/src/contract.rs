@@ -180,13 +180,6 @@ pub fn execute_propose(
         return Err(ContractError::TooManyMsgs {});
     }
 
-    // TODO: We need a permissioned proposer, probably the admin of the ProposalModule
-    // so we can avoid Verifiers to be hitting the entrypoint skipping our API
-    // This could be a security issue if we use Threshold::AbsoluteCount { threshold: 1 } as config param
-    // Also pre_propose modules and hooks would be relevant in this context
-
-    // TODO: We want to avoid further execution if vote_signatures is lower than the required quorum amount or we will fail during execution due to not in 'passed' state.
-
     // Determine the appropriate proposer. If this is coming from our
     // pre-propose module, it must be specified. Otherwise, the
     // proposer should not be specified.
@@ -327,6 +320,16 @@ pub fn execute_propose(
             .or_insert(Uint128::zero()) += vote_power;
     }
 
+    // Validate that message_hash_counts contains at least one key with value > 0
+    if !message_hash_counts
+        .values()
+        .any(|&value| value > Uint128::zero())
+    {
+        return Err(ContractError::ThresholdError(
+            ThresholdError::UnreachableThreshold {},
+        ));
+    }
+
     // Determine the message hash with the highest accumulated voting power
     let message_hash_majority: Vec<u8> = if let Some((_, &max_weight)) = message_hash_counts
         .iter()
@@ -369,13 +372,17 @@ pub fn execute_propose(
             )
             .unwrap();
 
+        // Checking if the current voter is a member with voting power higher than 0
+        let voting_power = get_voting_power(
+            deps.as_ref(),
+            Addr::unchecked(voter_address.clone()),
+            &config.dao,
+            Some(proposal.start_height),
+        )?;
+        let is_member = voting_power != Uint128::zero();
+
         // If Signature has been verified and a Member address has been found
-        if verified
-            && members
-                .members
-                .iter()
-                .any(|member| member.addr == voter_address)
-        {
+        if verified && is_member {
             // Compute yes or no vote based on majority previous computed.
             let vote = Some(if vote_signature.message_hash == message_hash_majority {
                 Vote::Yes
@@ -572,23 +579,51 @@ fn proposal_execute(
         .ok_or(ContractError::NoSuchProposal { id: proposal_id })?;
 
     let config = CONFIG.load(deps.storage)?;
-    // TODO - Recheck this, as this code block does not make much sense.
-    // With the proposer added as member, its power will be zero. So can not through
-    // Unauthorized error.
-    /*
+
     if config.only_members_execute {
+        // Get dao-voting-cw4 contract address
+        let dao_voting_cw4_addr: Addr = deps
+            .querier
+            .query_wasm_smart(config.dao.clone(), &VotingModule {})?;
+        // Get cw4-group contract address
+        let cw4_group_addr: Addr = deps
+            .querier
+            .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
+        // Get list of members
+        let members: MemberListResponse = deps.querier.query_wasm_smart(
+            cw4_group_addr.clone(),
+            &ListMembers {
+                start_after: None,
+                limit: None,
+            },
+        )?;
+
+        // Proposer should be a member and voting weight should be zero
+        let is_member = members
+            .members
+            .iter()
+            .any(|member| member.addr == info.sender);
         let power = get_voting_power(
             deps.as_ref(),
             info.sender.clone(),
             &config.dao,
-            Some(prop.start_height),
+            Some(env.block.height),
         )?;
 
-        if power.is_zero() {
+
+        deps.api.debug(format!("members {:?}", members).as_str());
+        deps.api
+            .debug(format!("info.sender {:?}", info.sender).as_str());
+        deps.api
+            .debug(format!("is_member {:?}", is_member).as_str());
+        deps.api.debug(format!("power {:?}", power).as_str());
+        if !is_member || power != Uint128::zero() {
+            deps.api.debug("DEBUG3");
             return Err(ContractError::Unauthorized {});
         }
-    }
-    */
+    };
+
+
     // Check here that the proposal is passed. Allow it to be executed
     // even if it is expired so long as it passed during its voting
     // period.

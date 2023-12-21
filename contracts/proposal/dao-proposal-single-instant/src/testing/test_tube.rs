@@ -16,6 +16,7 @@ pub mod test_tube {
         MsgSend, QueryBalanceRequest,
     };
     use osmosis_test_tube::osmosis_std::types::cosmos::base::v1beta1;
+    use osmosis_test_tube::RunnerError::ExecuteError;
     use osmosis_test_tube::{Account, Bank};
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
     use std::collections::HashMap;
@@ -30,7 +31,6 @@ pub mod test_tube {
     /// Test constants
     const INITIAL_BALANCE_AMOUNT: u128 = 1_000_000_000_000_000u128;
     const INITIAL_BALANCE_DENOM: &str = "ugov";
-    // const INITIAL_BALANCE_AMOUNT: u128 = 340282366920938463463374607431768211455u128;
 
     pub fn test_init(
         voters_number: u32,
@@ -70,6 +70,11 @@ pub mod test_tube {
                 weight: 1,
             })
             .collect::<Vec<_>>();
+        // Pushing proposer weight 0 account
+        initial_members.push(cw4::Member {
+            addr: admin.address().to_string(),
+            weight: 0,
+        });
 
 
         initial_members.push(cw4::Member {
@@ -382,7 +387,7 @@ pub mod test_tube {
 
     #[test]
     #[ignore]
-    /// TODO: Test case of a proposal failing due to a tie in message_hash_majority computation by voting_power.
+    /// Test case of a proposal failing due to a tie in message_hash_majority computation by voting_power.
     fn test_dao_proposal_single_instant_ko_tie() {
         let (app, contracts, admin, voters) = test_init(5);
         let wasm = Wasm::new(&app);
@@ -417,7 +422,7 @@ pub mod test_tube {
         }
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
-        let _execute_propose_resp = wasm
+        let execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
                 &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
@@ -429,21 +434,18 @@ pub mod test_tube {
                 }),
                 &vec![],
                 &admin,
-            );
+            )
+            .unwrap_err();
 
-         match _execute_propose_resp {
-            Ok(_) => panic!("Expected an error for not reaching the threshold, but the operation succeeded"),
-            Err(e) => {
-                // Check if the error is the expected one
-                let error_message = format!("{:?}", e);
-                assert!(error_message.contains("Not possible to reach required (passing) threshold"), "Unexpected error message: {}", error_message);
-            }
-        }
+        // Assert that the response is an error of a specific type (Unauthorized)
+        assert!(
+            matches!(execute_propose_resp, ExecuteError { msg } if msg.contains("failed to execute message; message index: 0: Not possible to reach required (passing) threshold: execute wasm contract failed"))
+        );
     }
 
     #[test]
     #[ignore]
-    /// TODO: Test case of a proposal failing due to not be reaching the minimum members quorum.
+    /// Test case of a proposal failing due to not be reaching the minimum members quorum.
     fn test_dao_proposal_single_instant_ko_not_quorum() {
         let (app, contracts, admin, voters) = test_init(2);
         let wasm = Wasm::new(&app);
@@ -452,7 +454,6 @@ pub mod test_tube {
         // The number of items of this array should match the test_init({voters_number}) value.
         let messages: Vec<&[u8]> = vec![
             b"Hello World!", // only one vote when 2 is required on test_init() fixture
-            b"Hello World!",
         ];
 
         let mut vote_signatures: Vec<VoteSignature> = vec![];
@@ -474,7 +475,7 @@ pub mod test_tube {
         }
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
-        let _execute_propose_resp = wasm
+        let execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
                 &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
@@ -486,14 +487,18 @@ pub mod test_tube {
                 }),
                 &vec![],
                 &admin,
-            ).unwrap();
+            )
+            .unwrap_err();
 
-        // TODO: Assert error called `Result::unwrap()` on an `Err` value: ExecuteError { msg: "failed to execute message; message index: 0: proposal is not in 'passed' state: execute wasm contract failed" }
-    }
+        // Assert that the response is an error of a specific type
+        assert!(
+            matches!(execute_propose_resp, ExecuteError { msg } if msg.contains("failed to execute message; message index: 0: proposal is not in 'passed' state: execute wasm contract failed"))
+        );
+     }
 
     #[test]
     #[ignore]
-    /// TODO: Test case of a proposal failing due to be proposed by the a member of the same validator set, without passing trough the 0 voting power proposer role.
+    /// Test case of a proposal failing due to be proposed by the a member of the same validator set, without passing trough the 0 voting power proposer role.
     fn test_dao_proposal_single_instant_ko_proposer() {
         let (app, contracts, _admin, voters) = test_init(3);
         let wasm = Wasm::new(&app);
@@ -521,7 +526,7 @@ pub mod test_tube {
         }
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
-        let _execute_propose_resp = wasm
+        let execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
                 &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
@@ -533,16 +538,13 @@ pub mod test_tube {
                 }),
                 &vec![],
                 &voters.get(0).unwrap(), // using first voter instead of admin
-            );
+    )
+            .unwrap_err();
 
-        match _execute_propose_resp {
-            Ok(_) => panic!("Unknown error."),
-            Err(e) => {
-                // Check if the error is the expected one
-                let error_message = format!("{:?}", e);
-                assert!(error_message.contains("failed to execute message; message index: 0: pre-propose modules must specify a proposer. lacking one, no proposer should be specified: execute wasm contract failed"), "Unexpected error message: {}", error_message);
-            }
-        }
+        // Assert that the response is an error of a specific type (Unauthorized)
+        assert!(
+            matches!(execute_propose_resp, ExecuteError { msg } if msg.contains("failed to execute message; message index: 0: unauthorized: execute wasm contract failed"))
+        );
     }
 
     #[test]
