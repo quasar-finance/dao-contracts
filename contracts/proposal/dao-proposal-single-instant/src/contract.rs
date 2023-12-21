@@ -610,15 +610,7 @@ fn proposal_execute(
             Some(env.block.height),
         )?;
 
-
-        deps.api.debug(format!("members {:?}", members).as_str());
-        deps.api
-            .debug(format!("info.sender {:?}", info.sender).as_str());
-        deps.api
-            .debug(format!("is_member {:?}", is_member).as_str());
-        deps.api.debug(format!("power {:?}", power).as_str());
         if !is_member || power != Uint128::zero() {
-            deps.api.debug("DEBUG3");
             return Err(ContractError::Unauthorized {});
         }
     };

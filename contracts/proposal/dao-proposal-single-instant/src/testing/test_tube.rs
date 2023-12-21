@@ -77,12 +77,6 @@ pub mod test_tube {
         });
 
 
-        initial_members.push(cw4::Member {
-            addr: admin.address().to_string(),
-            weight: 0,  // You can adjust the admin weight as needed
-        });
-
-
         // Contracts to store and instantiate
         let contracts_setup: Vec<(&str, Vec<u8>)> = vec![
             (
