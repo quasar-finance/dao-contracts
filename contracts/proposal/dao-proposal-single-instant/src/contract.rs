@@ -16,7 +16,7 @@ use bech32::ToBase32;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_binary, to_vec, Addr, Attribute, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
+    to_binary, to_vec, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
     Order, Reply, Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
 };
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
@@ -211,13 +211,16 @@ pub fn execute_propose(
     )?;
 
     // Proposer check #1 - It should be a member
-    match members.members.iter().any(|member| member.addr == proposer.clone()) {
+    match members
+        .members
+        .iter()
+        .any(|member| member.addr == proposer.clone())
+    {
         true => {
             // Proposer is a member.
-        },
+        }
         false => return Err(ContractError::InvalidProposer {}),
     }
-
 
     // Proposer check #2 - Proposer weight weight should be zero
     let proposer_vote_power = get_voting_power(
@@ -235,7 +238,6 @@ pub fn execute_propose(
         config.dao.clone(),
         &dao_interface::msg::QueryMsg::VotingModule {},
     )?;
-
 
     // Voting modules are not required to implement this
     // query. Lacking an implementation they are active by default.
@@ -614,7 +616,6 @@ fn proposal_execute(
             return Err(ContractError::Unauthorized {});
         }
     };
-
 
     // Check here that the proposal is passed. Allow it to be executed
     // even if it is expired so long as it passed during its voting

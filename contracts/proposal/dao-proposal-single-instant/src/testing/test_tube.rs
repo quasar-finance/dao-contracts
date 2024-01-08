@@ -76,7 +76,6 @@ pub mod test_tube {
             weight: 0,
         });
 
-
         // Contracts to store and instantiate
         let contracts_setup: Vec<(&str, Vec<u8>)> = vec![
             (
@@ -231,7 +230,6 @@ pub mod test_tube {
         let (app, contracts, admin, voters) = test_init(5);
         let bank = Bank::new(&app);
         let wasm = Wasm::new(&app);
-        println!("test_dao_proposal_single_instant_ok_send - admin {:?}",admin.account_id());
 
         // Create proposal execute msg as bank message from treasury back to the admin account
         let bank_send_amount = 1000u128;
@@ -349,18 +347,8 @@ pub mod test_tube {
                 }),
                 &vec![],
                 &admin,
-            );
-            // .unwrap();
-        match _execute_propose_resp {
-            Ok(_) =>  {}
-            Err(e) => {
-                // Check if the error is the expected one
-                let error_message = format!("{:?}", e);
-                println!("error message - {:?}", error_message);
-                // assert!(error_message.contains("Not possible to reach required (passing) threshold"), "Unexpected error message: {}", error_message);
-            }
-        }
-        // TODO: Assert votes, execution and proposal status from response attributes.
+            )
+            .unwrap();
 
         // Get Admin balance after proposal
         let admin_balance_after_proposal = bank
@@ -488,7 +476,7 @@ pub mod test_tube {
         assert!(
             matches!(execute_propose_resp, ExecuteError { msg } if msg.contains("failed to execute message; message index: 0: proposal is not in 'passed' state: execute wasm contract failed"))
         );
-     }
+    }
 
     #[test]
     #[ignore]
@@ -496,7 +484,7 @@ pub mod test_tube {
     fn test_dao_proposal_single_instant_ko_proposer() {
         let (app, contracts, _admin, voters) = test_init(3);
         let wasm = Wasm::new(&app);
-        println!("admin address - {:?}", _admin.account_id());
+
         // Creating different messages for each voter.
         // The number of items of this array should match the test_init({voters_number}) value.
         let messages: Vec<&[u8]> = vec![b"Hello World!", b"Hello World!", b"Hello World!"];
@@ -532,7 +520,7 @@ pub mod test_tube {
                 }),
                 &vec![],
                 &voters.get(0).unwrap(), // using first voter instead of admin
-    )
+            )
             .unwrap_err();
 
         // Assert that the response is an error of a specific type (Unauthorized)
