@@ -1,6 +1,6 @@
 {
   "contract_name": "dao-voting-token-staked",
-  "contract_version": "2.3.0",
+  "contract_version": "2.4.0",
   "idl_version": "1.0.0",
   "instantiate": {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -590,19 +590,6 @@
       {
         "type": "object",
         "required": [
-          "denom"
-        ],
-        "properties": {
-          "denom": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "type": "object",
-        "required": [
           "claims"
         ],
         "properties": {
@@ -683,6 +670,19 @@
         ],
         "properties": {
           "token_contract": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "denom"
+        ],
+        "properties": {
+          "denom": {
             "type": "object",
             "additionalProperties": false
           }

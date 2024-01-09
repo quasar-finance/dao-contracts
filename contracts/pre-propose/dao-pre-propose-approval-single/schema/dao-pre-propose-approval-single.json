@@ -1,6 +1,6 @@
 {
   "contract_name": "dao-pre-propose-approval-single",
-  "contract_version": "2.3.0",
+  "contract_version": "2.4.0",
   "idl_version": "1.0.0",
   "instantiate": {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -88,7 +88,7 @@
             "additionalProperties": false
           },
           {
-            "description": "Use the token address of the associated DAO's voting module. NOTE: in order to use the token address of the voting module the voting module must (1) use a cw20 token and (2) implement the `TokenContract {}` query type defined by `dao_dao_macros::token_query`. Failing to implement that and using this option will cause instantiation to fail.",
+            "description": "Use the token native denom or cw20 contract address of the associated DAO's voting module. NOTE: in order to retrieve the token automatically via this variant, the voting module must either (1) use a native token and implement the `Denom {}` query type defined by `dao_dao_macros::native_token_query` OR (2) use a cw20 token and implement the `TokenContract {}` query type defined by `dao_dao_macros::cw20_token_query`. Failing to implement correctly will cause this option to fail to instantiate.",
             "type": "object",
             "required": [
               "voting_module_token"
@@ -96,6 +96,14 @@
             "properties": {
               "voting_module_token": {
                 "type": "object",
+                "required": [
+                  "token_type"
+                ],
+                "properties": {
+                  "token_type": {
+                    "$ref": "#/definitions/VotingModuleTokenType"
+                  }
+                },
                 "additionalProperties": false
               }
             },
@@ -185,6 +193,13 @@
           }
         },
         "additionalProperties": false
+      },
+      "VotingModuleTokenType": {
+        "type": "string",
+        "enum": [
+          "native",
+          "cw20"
+        ]
       }
     }
   },
@@ -609,7 +624,7 @@
             "additionalProperties": false
           },
           {
-            "description": "Use the token address of the associated DAO's voting module. NOTE: in order to use the token address of the voting module the voting module must (1) use a cw20 token and (2) implement the `TokenContract {}` query type defined by `dao_dao_macros::token_query`. Failing to implement that and using this option will cause instantiation to fail.",
+            "description": "Use the token native denom or cw20 contract address of the associated DAO's voting module. NOTE: in order to retrieve the token automatically via this variant, the voting module must either (1) use a native token and implement the `Denom {}` query type defined by `dao_dao_macros::native_token_query` OR (2) use a cw20 token and implement the `TokenContract {}` query type defined by `dao_dao_macros::cw20_token_query`. Failing to implement correctly will cause this option to fail to instantiate.",
             "type": "object",
             "required": [
               "voting_module_token"
@@ -617,6 +632,14 @@
             "properties": {
               "voting_module_token": {
                 "type": "object",
+                "required": [
+                  "token_type"
+                ],
+                "properties": {
+                  "token_type": {
+                    "$ref": "#/definitions/VotingModuleTokenType"
+                  }
+                },
                 "additionalProperties": false
               }
             },
@@ -744,6 +767,53 @@
                     "type": "string"
                   }
                 },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Expiration": {
+        "description": "Expiration represents a point in time when some event happens. It can compare with a BlockInfo and will return is_expired() == true once the condition is hit (and for every block in the future)",
+        "oneOf": [
+          {
+            "description": "AtHeight will expire when `env.block.height` >= height",
+            "type": "object",
+            "required": [
+              "at_height"
+            ],
+            "properties": {
+              "at_height": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0.0
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "description": "AtTime will expire when `env.block.time` >= time",
+            "type": "object",
+            "required": [
+              "at_time"
+            ],
+            "properties": {
+              "at_time": {
+                "$ref": "#/definitions/Timestamp"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "description": "Never will never expire. Used to express the empty variant",
+            "type": "object",
+            "required": [
+              "never"
+            ],
+            "properties": {
+              "never": {
+                "type": "object",
                 "additionalProperties": false
               }
             },
@@ -1104,6 +1174,35 @@
             "enum": [
               "execution_failed"
             ]
+          },
+          {
+            "description": "The proposal is timelocked. Only the configured vetoer can execute or veto until the timelock expires.",
+            "type": "object",
+            "required": [
+              "veto_timelock"
+            ],
+            "properties": {
+              "veto_timelock": {
+                "type": "object",
+                "required": [
+                  "expiration"
+                ],
+                "properties": {
+                  "expiration": {
+                    "$ref": "#/definitions/Expiration"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "description": "The proposal has been vetoed.",
+            "type": "string",
+            "enum": [
+              "vetoed"
+            ]
           }
         ]
       },
@@ -1197,6 +1296,13 @@
           "no",
           "abstain",
           "no_with_veto"
+        ]
+      },
+      "VotingModuleTokenType": {
+        "type": "string",
+        "enum": [
+          "native",
+          "cw20"
         ]
       },
       "WasmMsg": {
