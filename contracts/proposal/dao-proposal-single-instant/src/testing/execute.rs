@@ -1,14 +1,14 @@
 use cosmwasm_std::{coins, Addr, Coin, CosmosMsg, Uint128};
 use cw_multi_test::{App, BankSudo, Executor};
 
+use crate::msg::SingleChoiceInstantProposalMsg as ProposeMsg;
 use cw_denom::CheckedDenom;
 use dao_pre_propose_single as cppbps;
-use dao_voting::{deposit::CheckedDepositInfo, pre_propose::ProposalCreationPolicy};
+use dao_voting::{deposit::CheckedDepositInfo, pre_propose::ProposalCreationPolicy, voting::Vote};
 
 use crate::{
-    msg::{ExecuteMsg, QueryMsg, SingleChoiceInstantProposeMsg},
+    msg::{ExecuteMsg, QueryMsg},
     query::ProposalResponse,
-    state::VoteSignature,
     testing::queries::{query_creation_policy, query_next_proposal_id},
     ContractError,
 };
@@ -71,16 +71,12 @@ pub(crate) fn make_proposal(
             .execute_contract(
                 Addr::unchecked(proposer),
                 proposal_single.clone(),
-                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+                &ExecuteMsg::Propose(ProposeMsg {
                     title: "title".to_string(),
                     description: "description".to_string(),
                     msgs: msgs.clone(),
                     proposer: None,
-                    vote_signatures: vec![VoteSignature {
-                        message_hash: todo!(), // TODO
-                        signature: todo!(),    // TODO
-                        public_key: todo!(),   // TODO
-                    }],
+                    vote_signatures: todo!(),
                 }),
                 &[],
             )
@@ -117,85 +113,87 @@ pub(crate) fn make_proposal(
     id
 }
 
-// pub(crate) fn vote_on_proposal(
-//     app: &mut App,
-//     proposal_single: &Addr,
-//     sender: &str,
-//     proposal_id: u64,
-//     vote: Vote,
-// ) {
-//     app.execute_contract(
-//         Addr::unchecked(sender),
-//         proposal_single.clone(),
-//         &ExecuteMsg::Vote {
-//             proposal_id,
-//             vote,
-//             rationale: None,
-//         },
-//         &[],
-//     )
-//     .unwrap();
-// }
+pub(crate) fn vote_on_proposal(
+    app: &mut App,
+    proposal_single: &Addr,
+    sender: &str,
+    proposal_id: u64,
+    vote: Vote,
+) {
+    // app.execute_contract(
+    //     Addr::unchecked(sender),
+    //     proposal_single.clone(),
+    //     &ExecuteMsg::Vote {
+    //         proposal_id,
+    //         vote,
+    //         rationale: None,
+    //     },
+    //     &[],
+    // )
+    // .unwrap();
+}
 
-// pub(crate) fn vote_on_proposal_should_fail(
-//     app: &mut App,
-//     proposal_single: &Addr,
-//     sender: &str,
-//     proposal_id: u64,
-//     vote: Vote,
-// ) -> ContractError {
-//     app.execute_contract(
-//         Addr::unchecked(sender),
-//         proposal_single.clone(),
-//         &ExecuteMsg::Vote {
-//             proposal_id,
-//             vote,
-//             rationale: None,
-//         },
-//         &[],
-//     )
-//     .unwrap_err()
-//     .downcast()
-//     .unwrap()
-// }
+pub(crate) fn vote_on_proposal_should_fail(
+    app: &mut App,
+    proposal_single: &Addr,
+    sender: &str,
+    proposal_id: u64,
+    vote: Vote,
+) -> ContractError {
+    // app.execute_contract(
+    //     Addr::unchecked(sender),
+    //     proposal_single.clone(),
+    //     &ExecuteMsg::Vote {
+    //         proposal_id,
+    //         vote,
+    //         rationale: None,
+    //     },
+    //     &[],
+    // )
+    // .unwrap_err()
+    // .downcast()
+    // .unwrap()
+    todo!()
+}
 
-// pub(crate) fn execute_proposal_should_fail(
-//     app: &mut App,
-//     proposal_single: &Addr,
-//     sender: &str,
-//     proposal_id: u64,
-// ) -> ContractError {
-//     app.execute_contract(
-//         Addr::unchecked(sender),
-//         proposal_single.clone(),
-//         &ExecuteMsg::Execute { proposal_id },
-//         &[],
-//     )
-//     .unwrap_err()
-//     .downcast()
-//     .unwrap()
-// }
+pub(crate) fn execute_proposal_should_fail(
+    app: &mut App,
+    proposal_single: &Addr,
+    sender: &str,
+    proposal_id: u64,
+) -> ContractError {
+    // app.execute_contract(
+    //     Addr::unchecked(sender),
+    //     proposal_single.clone(),
+    //     &ExecuteMsg::Execute { proposal_id },
+    //     &[],
+    // )
+    // .unwrap_err()
+    // .downcast()
+    // .unwrap()
+    todo!()
+}
 
-// pub(crate) fn vote_on_proposal_with_rationale(
-//     app: &mut App,
-//     proposal_single: &Addr,
-//     sender: &str,
-//     proposal_id: u64,
-//     vote: Vote,
-//     rationale: Option<String>,
-// ) {
-//     app.execute_contract(
-//         Addr::unchecked(sender),
-//         proposal_single.clone(),
-//         &ExecuteMsg::Vote {
-//             proposal_id,
-//             vote,
-//             rationale,
-//         },
-//         &[],
-//     )
-//     .unwrap();
-// }
+pub(crate) fn vote_on_proposal_with_rationale(
+    app: &mut App,
+    proposal_single: &Addr,
+    sender: &str,
+    proposal_id: u64,
+    vote: Vote,
+    rationale: Option<String>,
+) {
+    // app.execute_contract(
+    //     Addr::unchecked(sender),
+    //     proposal_single.clone(),
+    //     &ExecuteMsg::Vote {
+    //         proposal_id,
+    //         vote,
+    //         rationale,
+    //     },
+    //     &[],
+    // )
+    // .unwrap();
+}
 
 pub(crate) fn update_rationale(
     app: &mut App,
@@ -216,20 +214,20 @@ pub(crate) fn update_rationale(
     .unwrap();
 }
 
-// pub(crate) fn execute_proposal(
-//     app: &mut App,
-//     proposal_single: &Addr,
-//     sender: &str,
-//     proposal_id: u64,
-// ) {
-//     app.execute_contract(
-//         Addr::unchecked(sender),
-//         proposal_single.clone(),
-//         &ExecuteMsg::Execute { proposal_id },
-//         &[],
-//     )
-//     .unwrap();
-// }
+pub(crate) fn execute_proposal(
+    app: &mut App,
+    proposal_single: &Addr,
+    sender: &str,
+    proposal_id: u64,
+) {
+    // app.execute_contract(
+    //     Addr::unchecked(sender),
+    //     proposal_single.clone(),
+    //     &ExecuteMsg::Execute { proposal_id },
+    //     &[],
+    // )
+    // .unwrap();
+}
 
 pub(crate) fn close_proposal_should_fail(
     app: &mut App,
