@@ -3,9 +3,11 @@ use cosmwasm_std::{Addr, Uint128};
 use cw_hooks::Hooks;
 use cw_storage_plus::{Item, Map};
 use cw_utils::Duration;
-use dao_voting::{pre_propose::ProposalCreationPolicy, threshold::Threshold, voting::Vote};
+use dao_voting::{
+    pre_propose::ProposalCreationPolicy, threshold::Threshold, veto::VetoConfig, voting::Vote,
+};
 
-use crate::proposal::SingleChoiceInstantPropose;
+use crate::proposal::SingleChoiceProposal;
 
 /// A vote cast for an instant proposal containing message_hash and message_signature.
 #[cw_serde]
@@ -32,6 +34,7 @@ pub struct Ballot {
     #[serde(default)]
     pub rationale: Option<String>,
 }
+
 /// The governance module's configuration.
 #[cw_serde]
 pub struct Config {
@@ -66,6 +69,9 @@ pub struct Config {
     /// remain open until the DAO's treasury was large enough for it to be
     /// executed.
     pub close_proposal_on_execution_failure: bool,
+    /// Optional veto configuration. If set to `None`, veto option
+    /// is disabled. Otherwise contains the configuration for veto flow.
+    pub veto: Option<VetoConfig>,
 }
 
 /// The current top level config for the module.  The "config" key was
@@ -73,7 +79,7 @@ pub struct Config {
 pub const CONFIG: Item<Config> = Item::new("config_v2");
 /// The number of proposals that have been created.
 pub const PROPOSAL_COUNT: Item<u64> = Item::new("proposal_count");
-pub const PROPOSALS: Map<u64, SingleChoiceInstantPropose> = Map::new("proposals_v2");
+pub const PROPOSALS: Map<u64, SingleChoiceProposal> = Map::new("proposals_v2");
 pub const BALLOTS: Map<(u64, &Addr), Ballot> = Map::new("ballots");
 /// Consumers of proposal state change hooks.
 pub const PROPOSAL_HOOKS: Hooks = Hooks::new("proposal_hooks");

@@ -1,4 +1,4 @@
-use cosmwasm_std::{coins, from_slice, to_binary, Addr, Coin, Decimal, Empty, Uint128};
+use cosmwasm_std::{coins, from_json, to_json_binary, Addr, Coin, Decimal, Empty, Uint128};
 use cpm::query::ProposalResponse;
 use cw2::ContractVersion;
 use cw20::Cw20Coin;
@@ -65,7 +65,7 @@ fn get_default_proposal_module_instantiate(
         pre_propose_info: PreProposeInfo::ModuleMayPropose {
             info: ModuleInstantiateInfo {
                 code_id: pre_propose_id,
-                msg: to_binary(&InstantiateMsg {
+                msg: to_json_binary(&InstantiateMsg {
                     deposit_info,
                     open_proposal_submission,
                     extension: Empty::default(),
@@ -77,6 +77,7 @@ fn get_default_proposal_module_instantiate(
             },
         },
         close_proposal_on_execution_failure: false,
+        veto: None,
     }
 }
 
@@ -122,7 +123,7 @@ fn setup_default_test(
     let core_addr = instantiate_with_cw4_groups_governance(
         app,
         cpm_id,
-        to_binary(&proposal_module_instantiate).unwrap(),
+        to_json_binary(&proposal_module_instantiate).unwrap(),
         Some(vec![
             cw20::Cw20Coin {
                 address: "ekez".to_string(),
@@ -800,8 +801,8 @@ fn test_set_version() {
         false,
     );
 
-    let info: ContractVersion = from_slice(
-        &app.wrap()
+    let info: ContractVersion = from_json(
+        app.wrap()
             .query_wasm_raw(pre_propose, "contract_info".as_bytes())
             .unwrap()
             .unwrap(),
@@ -1047,7 +1048,7 @@ fn test_instantiate_with_zero_native_deposit() {
             pre_propose_info: PreProposeInfo::ModuleMayPropose {
                 info: ModuleInstantiateInfo {
                     code_id: pre_propose_id,
-                    msg: to_binary(&InstantiateMsg {
+                    msg: to_json_binary(&InstantiateMsg {
                         deposit_info: Some(UncheckedDepositInfo {
                             denom: DepositToken::Token {
                                 denom: UncheckedDenom::Native("ujuno".to_string()),
@@ -1065,6 +1066,7 @@ fn test_instantiate_with_zero_native_deposit() {
                 },
             },
             close_proposal_on_execution_failure: false,
+            veto: None,
         }
     };
 
@@ -1072,7 +1074,7 @@ fn test_instantiate_with_zero_native_deposit() {
     instantiate_with_cw4_groups_governance(
         &mut app,
         cpm_id,
-        to_binary(&proposal_module_instantiate).unwrap(),
+        to_json_binary(&proposal_module_instantiate).unwrap(),
         Some(vec![
             cw20::Cw20Coin {
                 address: "ekez".to_string(),
@@ -1109,7 +1111,7 @@ fn test_instantiate_with_zero_cw20_deposit() {
             pre_propose_info: PreProposeInfo::ModuleMayPropose {
                 info: ModuleInstantiateInfo {
                     code_id: pre_propose_id,
-                    msg: to_binary(&InstantiateMsg {
+                    msg: to_json_binary(&InstantiateMsg {
                         deposit_info: Some(UncheckedDepositInfo {
                             denom: DepositToken::Token {
                                 denom: UncheckedDenom::Cw20(cw20_addr.into_string()),
@@ -1127,6 +1129,7 @@ fn test_instantiate_with_zero_cw20_deposit() {
                 },
             },
             close_proposal_on_execution_failure: false,
+            veto: None,
         }
     };
 
@@ -1134,7 +1137,7 @@ fn test_instantiate_with_zero_cw20_deposit() {
     instantiate_with_cw4_groups_governance(
         &mut app,
         cpm_id,
-        to_binary(&proposal_module_instantiate).unwrap(),
+        to_json_binary(&proposal_module_instantiate).unwrap(),
         Some(vec![
             cw20::Cw20Coin {
                 address: "ekez".to_string(),

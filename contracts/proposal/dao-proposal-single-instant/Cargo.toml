@@ -17,6 +17,13 @@ backtraces = ["cosmwasm-std/backtraces"]
 library = []
 
 [dependencies]
+cw4 = { workspace = true } # moved for single-instant
+cw4-group = { workspace = true } # moved for single-instant
+dao-voting-cw4 = { workspace = true } # moved for single-instant
+sha2 = { version = "0.10.7"}
+ripemd = "0.1.1" # this could be deprecated by using sha2 only
+bech32 = "0.9.0" # moved for single-instant
+
 cosmwasm-std = { workspace = true, features = ["ibc3"] }
 cosmwasm-storage = { workspace = true }
 cosmwasm-schema = { workspace = true }
@@ -25,28 +32,25 @@ cw-utils = { workspace = true }
 cw2 = { workspace = true }
 cw20 = { workspace = true }
 cw3 = { workspace = true }
-cw4 = { workspace = true }
-cw4-group = { workspace = true }
 thiserror = { workspace = true }
-dao-voting-cw4 = { workspace = true } # moved for single-instant
+
 dao-dao-macros = { workspace = true }
 dao-pre-propose-base = { workspace = true }
 dao-interface = { workspace = true }
 dao-voting = { workspace = true }
 cw-hooks = { workspace = true }
 dao-hooks = { workspace = true }
+
 cw-utils-v1 = { workspace = true}
 voting-v1 = { workspace = true }
 cw-proposal-single-v1 = { workspace = true, features = ["library"] }
-sha2 = { version = "0.10.7", features = [] }
-ripemd = "0.1.1" # this could be deprecated by using sha2 only
-bech32 = "0.9.0"
 
 [dev-dependencies]
-cosmrs = { workspace = true }
+anyhow = { workspace = true }
 cosmwasm-schema = { workspace = true }
 cw-multi-test = { workspace = true }
 dao-dao-core = { workspace = true }
+dao-voting-cw4 = { workspace = true }
 dao-voting-cw20-balance = { workspace = true }
 dao-voting-cw20-staked = { workspace = true }
 dao-voting-token-staked = { workspace = true }
@@ -57,5 +61,8 @@ dao-testing = { workspace = true }
 cw20-stake = { workspace = true }
 cw20-base = { workspace = true }
 cw721-base = { workspace = true }
+cw4 = { workspace = true }
+cw4-group = { workspace = true }
 cw-core-v1 = { workspace = true, features = ["library"] }
+#cosmrs = { workspace = true } # added for single-instant
 osmosis-test-tube = { workspace = true } # added for single-instant

@@ -3129,12 +3129,12 @@
               "minimum": 0.0
             },
             "proposal": {
-              "$ref": "#/definitions/SingleChoiceInstantPropose"
+              "$ref": "#/definitions/SingleChoiceProposal"
             }
           },
           "additionalProperties": false
         },
-        "SingleChoiceInstantPropose": {
+        "SingleChoiceProposal": {
           "type": "object",
           "required": [
             "allow_revoting",
@@ -3771,7 +3771,7 @@
           "minimum": 0.0
         },
         "proposal": {
-          "$ref": "#/definitions/SingleChoiceInstantPropose"
+          "$ref": "#/definitions/SingleChoiceProposal"
         }
       },
       "additionalProperties": false,
@@ -4295,7 +4295,7 @@
             }
           ]
         },
-        "SingleChoiceInstantPropose": {
+        "SingleChoiceProposal": {
           "type": "object",
           "required": [
             "allow_revoting",
@@ -5436,12 +5436,12 @@
               "minimum": 0.0
             },
             "proposal": {
-              "$ref": "#/definitions/SingleChoiceInstantPropose"
+              "$ref": "#/definitions/SingleChoiceProposal"
             }
           },
           "additionalProperties": false
         },
-        "SingleChoiceInstantPropose": {
+        "SingleChoiceProposal": {
           "type": "object",
           "required": [
             "allow_revoting",

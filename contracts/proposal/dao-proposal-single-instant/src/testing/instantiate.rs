@@ -1,4 +1,4 @@
-use cosmwasm_std::{to_binary, Addr, Coin, Decimal, Empty, Uint128};
+use cosmwasm_std::{to_json_binary, Addr, Coin, Decimal, Empty, Uint128};
 use cw20::Cw20Coin;
 
 use cw_multi_test::{next_block, App, BankSudo, Executor, SudoMsg};
@@ -7,7 +7,7 @@ use dao_interface::state::{Admin, ModuleInstantiateInfo};
 use dao_pre_propose_single as cppbps;
 
 use dao_voting::{
-    deposit::{DepositRefundPolicy, UncheckedDepositInfo},
+    deposit::{DepositRefundPolicy, UncheckedDepositInfo, VotingModuleTokenType},
     pre_propose::PreProposeInfo,
     threshold::{ActiveThreshold, PercentageThreshold, Threshold::ThresholdQuorum},
 };
@@ -34,7 +34,7 @@ pub(crate) fn get_pre_propose_info(
     PreProposeInfo::ModuleMayPropose {
         info: ModuleInstantiateInfo {
             code_id: pre_propose_contract,
-            msg: to_binary(&cppbps::InstantiateMsg {
+            msg: to_json_binary(&cppbps::InstantiateMsg {
                 deposit_info,
                 open_proposal_submission,
                 extension: Empty::default(),
@@ -49,6 +49,7 @@ pub(crate) fn get_pre_propose_info(
 
 pub(crate) fn get_default_token_dao_proposal_module_instantiate(app: &mut App) -> InstantiateMsg {
     InstantiateMsg {
+        veto: None,
         threshold: ThresholdQuorum {
             quorum: PercentageThreshold::Percent(Decimal::percent(15)),
             threshold: PercentageThreshold::Majority {},
@@ -60,7 +61,9 @@ pub(crate) fn get_default_token_dao_proposal_module_instantiate(app: &mut App) -
         pre_propose_info: get_pre_propose_info(
             app,
             Some(UncheckedDepositInfo {
-                denom: dao_voting::deposit::DepositToken::VotingModuleToken {},
+                denom: dao_voting::deposit::DepositToken::VotingModuleToken {
+                    token_type: VotingModuleTokenType::Cw20,
+                },
                 amount: Uint128::new(10_000_000),
                 refund_policy: DepositRefundPolicy::OnlyPassed,
             }),
@@ -75,6 +78,7 @@ pub(crate) fn get_default_non_token_dao_proposal_module_instantiate(
     app: &mut App,
 ) -> InstantiateMsg {
     InstantiateMsg {
+        veto: None,
         threshold: ThresholdQuorum {
             threshold: PercentageThreshold::Percent(Decimal::percent(15)),
             quorum: PercentageThreshold::Majority {},
@@ -146,7 +150,7 @@ pub(crate) fn instantiate_with_staked_cw721_governance(
         automatically_add_cw721s: false,
         voting_module_instantiate_info: ModuleInstantiateInfo {
             code_id: cw721_stake_id,
-            msg: to_binary(&dao_voting_cw721_staked::msg::InstantiateMsg {
+            msg: to_json_binary(&dao_voting_cw721_staked::msg::InstantiateMsg {
                 unstaking_duration: None,
                 nft_contract: dao_voting_cw721_staked::msg::NftContract::Existing {
                     address: nft_address.to_string(),
@@ -160,7 +164,7 @@ pub(crate) fn instantiate_with_staked_cw721_governance(
         },
         proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
             code_id: proposal_module_code_id,
-            msg: to_binary(&proposal_module_instantiate).unwrap(),
+            msg: to_json_binary(&proposal_module_instantiate).unwrap(),
             admin: Some(Admin::CoreModule {}),
             funds: vec![],
             label: "DAO DAO governance module.".to_string(),
@@ -208,7 +212,7 @@ pub(crate) fn instantiate_with_staked_cw721_governance(
                 &cw721_base::msg::ExecuteMsg::SendNft::<Option<Empty>, Empty> {
                     contract: staking_addr.to_string(),
                     token_id: format!("{address}_{i}"),
-                    msg: to_binary("").unwrap(),
+                    msg: to_json_binary("").unwrap(),
                 },
                 &[],
             )
@@ -265,7 +269,7 @@ pub(crate) fn instantiate_with_native_staked_balances_governance(
         automatically_add_cw721s: false,
         voting_module_instantiate_info: ModuleInstantiateInfo {
             code_id: native_stake_id,
-            msg: to_binary(&dao_voting_token_staked::msg::InstantiateMsg {
+            msg: to_json_binary(&dao_voting_token_staked::msg::InstantiateMsg {
                 token_info: dao_voting_token_staked::msg::TokenInfo::Existing {
                     denom: "ujuno".to_string(),
                 },
@@ -279,7 +283,7 @@ pub(crate) fn instantiate_with_native_staked_balances_governance(
         },
         proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
             code_id: proposal_module_code_id,
-            msg: to_binary(&proposal_module_instantiate).unwrap(),
+            msg: to_json_binary(&proposal_module_instantiate).unwrap(),
             admin: Some(Admin::CoreModule {}),
             funds: vec![],
             label: "DAO DAO governance module.".to_string(),
@@ -378,7 +382,7 @@ pub(crate) fn instantiate_with_staked_balances_governance(
         automatically_add_cw721s: false,
         voting_module_instantiate_info: ModuleInstantiateInfo {
             code_id: staked_balances_voting_id,
-            msg: to_binary(&dao_voting_cw20_staked::msg::InstantiateMsg {
+            msg: to_json_binary(&dao_voting_cw20_staked::msg::InstantiateMsg {
                 active_threshold: None,
                 token_info: dao_voting_cw20_staked::msg::TokenInfo::New {
                     code_id: cw20_id,
@@ -400,7 +404,7 @@ pub(crate) fn instantiate_with_staked_balances_governance(
         },
         proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
             code_id: proposal_module_code_id,
-            msg: to_binary(&proposal_module_instantiate).unwrap(),
+            msg: to_json_binary(&proposal_module_instantiate).unwrap(),
             admin: Some(Admin::CoreModule {}),
             funds: vec![],
             label: "DAO DAO governance module.".to_string(),
@@ -451,7 +455,7 @@ pub(crate) fn instantiate_with_staked_balances_governance(
             &cw20::Cw20ExecuteMsg::Send {
                 contract: staking_contract.to_string(),
                 amount,
-                msg: to_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
+                msg: to_json_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
             },
             &[],
         )
@@ -493,7 +497,7 @@ pub(crate) fn instantiate_with_staking_active_threshold(
         automatically_add_cw721s: true,
         voting_module_instantiate_info: ModuleInstantiateInfo {
             code_id: votemod_id,
-            msg: to_binary(&dao_voting_cw20_staked::msg::InstantiateMsg {
+            msg: to_json_binary(&dao_voting_cw20_staked::msg::InstantiateMsg {
                 token_info: dao_voting_cw20_staked::msg::TokenInfo::New {
                     code_id: cw20_id,
                     label: "DAO DAO governance token".to_string(),
@@ -515,7 +519,7 @@ pub(crate) fn instantiate_with_staking_active_threshold(
         },
         proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
             code_id: proposal_module_code_id,
-            msg: to_binary(&proposal_module_instantiate).unwrap(),
+            msg: to_json_binary(&proposal_module_instantiate).unwrap(),
             admin: Some(Admin::CoreModule {}),
             funds: vec![],
             label: "DAO DAO governance module".to_string(),
@@ -581,7 +585,7 @@ pub(crate) fn instantiate_with_cw4_groups_governance(
         automatically_add_cw721s: true,
         voting_module_instantiate_info: ModuleInstantiateInfo {
             code_id: votemod_id,
-            msg: to_binary(&dao_voting_cw4::msg::InstantiateMsg {
+            msg: to_json_binary(&dao_voting_cw4::msg::InstantiateMsg {
                 group_contract: GroupContract::New {
                     cw4_group_code_id: cw4_id,
                     initial_members: initial_weights,
@@ -594,7 +598,7 @@ pub(crate) fn instantiate_with_cw4_groups_governance(
         },
         proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
             code_id: proposal_module_code_id,
-            msg: to_binary(&proposal_module_instantiate).unwrap(),
+            msg: to_json_binary(&proposal_module_instantiate).unwrap(),
             admin: Some(Admin::CoreModule {}),
             funds: vec![],
             label: "DAO DAO governance module".to_string(),
