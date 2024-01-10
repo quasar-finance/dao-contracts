@@ -2,7 +2,7 @@
 pub mod test_tube {
     use crate::contract::compute_sha256_hash;
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposalMsg};
-    use crate::state::VoteSignature};
+    use crate::state::VoteSignature;
     use cosmwasm_std::testing::mock_dependencies;
     use cosmwasm_std::{to_json_binary, Api, BankMsg, Coin, CosmosMsg, Uint128};
     use cw_utils::Duration;
