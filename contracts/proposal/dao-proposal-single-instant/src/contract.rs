@@ -202,45 +202,46 @@ pub fn execute_propose(
     };
 
     // Get dao-voting-cw4 contract address
-    let dao_voting_cw4_addr: Addr = deps
-        .querier
-        .query_wasm_smart(config.dao.clone(), &VotingModule {})?;
+    // let dao_voting_cw4_addr: Addr = deps
+    //     .querier
+    //     .query_wasm_smart(config.dao.clone(), &VotingModule {})?;
     // Get cw4-group contract address
-    let cw4_group_addr: Addr = deps
-        .querier
-        .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
+    // let cw4_group_addr: Addr = deps
+    //     .querier
+    //     .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
+
     // Get list of members
-    let members: MemberListResponse = deps.querier.query_wasm_smart(
-        cw4_group_addr.clone(),
-        &ListMembers {
-            start_after: None,
-            limit: None,
-        },
-    )?;
+    // let members: MemberListResponse = deps.querier.query_wasm_smart(
+    //     cw4_group_addr.clone(),
+    //     &ListMembers {
+    //         start_after: None,
+    //         limit: None,
+    //     },
+    // )?;
 
     // Proposer check #1 - It should be a member
-    match members
-        .members
-        .iter()
-        .any(|member| member.addr == proposer.clone())
-    {
-        true => {
-            // Proposer is a member.
-        }
-        false => return Err(ContractError::InvalidProposer {}),
-    }
+    // match members
+    //     .members
+    //     .iter()
+    //     .any(|member| member.addr == proposer.clone())
+    // {
+    //     true => {
+    //         // Proposer is a member.
+    //     }
+    //     false => return Err(ContractError::InvalidProposer {}),
+    // }
 
     // Proposer check #2 - Proposer weight weight should be zero
-    let proposer_vote_power = get_voting_power(
-        deps.as_ref(),
-        proposer.clone(),
-        &config.dao,
-        Some(env.block.height),
-    )?;
+    // let proposer_vote_power = get_voting_power(
+    //     deps.as_ref(),
+    //     proposer.clone(),
+    //     &config.dao,
+    //     Some(env.block.height),
+    // )?;
 
-    if proposer_vote_power != Uint128::zero() {
-        return Err(ContractError::InvalidProposer {});
-    }
+    // if proposer_vote_power != Uint128::zero() {
+    //     return Err(ContractError::InvalidProposer {});
+    // }
 
     let voting_module: Addr = deps.querier.query_wasm_smart(
         config.dao.clone(),
@@ -468,79 +469,6 @@ pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, Cont
     Ok(addr)
 }
 
-pub fn execute_veto(
-    deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
-    proposal_id: u64,
-) -> Result<Response, ContractError> {
-    let mut prop = PROPOSALS
-        .may_load(deps.storage, proposal_id)?
-        .ok_or(ContractError::NoSuchProposal { id: proposal_id })?;
-
-    // ensure status is up to date
-    prop.update_status(&env.block)?;
-    let old_status = prop.status;
-
-    let veto_config = prop
-        .veto
-        .as_ref()
-        .ok_or(VetoError::NoVetoConfiguration {})?;
-
-    // Check sender is vetoer
-    veto_config.check_is_vetoer(&info)?;
-
-    match prop.status {
-        Status::Open => {
-            // can only veto an open proposal if veto_before_passed is enabled.
-            veto_config.check_veto_before_passed_enabled()?;
-        }
-        Status::Passed => {
-            // if this proposal has veto configured but is in the passed state,
-            // the timelock already expired, so provide a more specific error.
-            return Err(ContractError::VetoError(VetoError::TimelockExpired {}));
-        }
-        Status::VetoTimelock { expiration } => {
-            // vetoer can veto the proposal iff the timelock is active/not
-            // expired. this should never happen since the status updates to
-            // passed after the timelock expires, but let's check anyway.
-            if expiration.is_expired(&env.block) {
-                return Err(ContractError::VetoError(VetoError::TimelockExpired {}));
-            }
-        }
-        // generic status error if the proposal has any other status.
-        _ => {
-            return Err(ContractError::VetoError(VetoError::InvalidProposalStatus {
-                status: prop.status.to_string(),
-            }));
-        }
-    }
-
-    // Update proposal status to vetoed
-    prop.status = Status::Vetoed;
-    PROPOSALS.save(deps.storage, proposal_id, &prop)?;
-
-    // Add proposal status change hooks
-    let proposal_status_changed_hooks = proposal_status_changed_hooks(
-        PROPOSAL_HOOKS,
-        deps.storage,
-        proposal_id,
-        old_status.to_string(),
-        prop.status.to_string(),
-    )?;
-
-    // Add prepropose / deposit module hook which will handle deposit refunds.
-    let proposal_creation_policy = CREATION_POLICY.load(deps.storage)?;
-    let proposal_completed_hooks =
-        proposal_completed_hooks(proposal_creation_policy, proposal_id, prop.status)?;
-
-    Ok(Response::new()
-        .add_attribute("action", "veto")
-        .add_attribute("proposal_id", proposal_id.to_string())
-        .add_submessages(proposal_status_changed_hooks)
-        .add_submessages(proposal_completed_hooks))
-}
-
 // todo: Find a better place for this method that has been downcasted from entrypoint to private method.
 fn proposal_vote(
     deps: DepsMut,
@@ -672,10 +600,12 @@ fn proposal_execute(
             config.dao.clone(),
             &dao_interface::msg::QueryMsg::VotingModule {},
         )?;
+
         // Get cw4-group contract address
         let cw4_group_addr: Addr = deps
             .querier
             .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
+
         // Get list of members
         let members: MemberListResponse = deps.querier.query_wasm_smart(
             cw4_group_addr.clone(),
@@ -685,7 +615,6 @@ fn proposal_execute(
             },
         )?;
 
-        // Proposer should be a member and voting weight should be zero
         let is_member = members
             .members
             .iter()
@@ -697,6 +626,7 @@ fn proposal_execute(
             Some(prop.start_height),
         )?;
 
+        // Proposer should be a member and voting weight should be zero
         sender_can_execute = is_member && power.is_zero();
     }
 
@@ -787,6 +717,79 @@ fn proposal_execute(
         .add_attribute("sender", info.sender)
         .add_attribute("proposal_id", proposal_id.to_string())
         .add_attribute("dao", config.dao))
+}
+
+pub fn execute_veto(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    proposal_id: u64,
+) -> Result<Response, ContractError> {
+    let mut prop = PROPOSALS
+        .may_load(deps.storage, proposal_id)?
+        .ok_or(ContractError::NoSuchProposal { id: proposal_id })?;
+
+    // ensure status is up to date
+    prop.update_status(&env.block)?;
+    let old_status = prop.status;
+
+    let veto_config = prop
+        .veto
+        .as_ref()
+        .ok_or(VetoError::NoVetoConfiguration {})?;
+
+    // Check sender is vetoer
+    veto_config.check_is_vetoer(&info)?;
+
+    match prop.status {
+        Status::Open => {
+            // can only veto an open proposal if veto_before_passed is enabled.
+            veto_config.check_veto_before_passed_enabled()?;
+        }
+        Status::Passed => {
+            // if this proposal has veto configured but is in the passed state,
+            // the timelock already expired, so provide a more specific error.
+            return Err(ContractError::VetoError(VetoError::TimelockExpired {}));
+        }
+        Status::VetoTimelock { expiration } => {
+            // vetoer can veto the proposal iff the timelock is active/not
+            // expired. this should never happen since the status updates to
+            // passed after the timelock expires, but let's check anyway.
+            if expiration.is_expired(&env.block) {
+                return Err(ContractError::VetoError(VetoError::TimelockExpired {}));
+            }
+        }
+        // generic status error if the proposal has any other status.
+        _ => {
+            return Err(ContractError::VetoError(VetoError::InvalidProposalStatus {
+                status: prop.status.to_string(),
+            }));
+        }
+    }
+
+    // Update proposal status to vetoed
+    prop.status = Status::Vetoed;
+    PROPOSALS.save(deps.storage, proposal_id, &prop)?;
+
+    // Add proposal status change hooks
+    let proposal_status_changed_hooks = proposal_status_changed_hooks(
+        PROPOSAL_HOOKS,
+        deps.storage,
+        proposal_id,
+        old_status.to_string(),
+        prop.status.to_string(),
+    )?;
+
+    // Add prepropose / deposit module hook which will handle deposit refunds.
+    let proposal_creation_policy = CREATION_POLICY.load(deps.storage)?;
+    let proposal_completed_hooks =
+        proposal_completed_hooks(proposal_creation_policy, proposal_id, prop.status)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "veto")
+        .add_attribute("proposal_id", proposal_id.to_string())
+        .add_submessages(proposal_status_changed_hooks)
+        .add_submessages(proposal_completed_hooks))
 }
 
 pub fn execute_update_rationale(

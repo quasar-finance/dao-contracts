@@ -538,7 +538,7 @@ pub mod test_tube {
                     vote_signatures,
                 }),
                 &vec![],
-                &voters.get(0).unwrap(), // using first voter instead of admin
+                &voters.get(0).unwrap(), // using first voter instead of admin to vote as member with voting power > 0
             )
             .unwrap_err();
 
