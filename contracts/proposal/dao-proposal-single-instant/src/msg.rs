@@ -1,10 +1,31 @@
+use crate::state::VoteSignature;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{CosmosMsg, Empty};
 use cw_utils::Duration;
 use dao_dao_macros::proposal_module_query;
-use dao_voting::{pre_propose::PreProposeInfo, threshold::Threshold};
+use dao_voting::{pre_propose::PreProposeInfo, threshold::Threshold, veto::VetoConfig};
 
-use crate::state::VoteSignature;
+#[cw_serde]
+pub struct SingleChoiceInstantProposalMsg {
+    /// The title of the proposal.
+    pub title: String,
+    /// A description of the proposal.
+    pub description: String,
+    /// The messages that should be executed in response to this
+    /// proposal passing.
+    pub msgs: Vec<CosmosMsg<Empty>>,
+    /// The address creating the proposal. If no pre-propose
+    /// module is attached to this module this must always be None
+    /// as the proposer is the sender of the propose message. If a
+    /// pre-propose module is attached, this must be Some and will
+    /// set the proposer of the proposal it creates.
+    pub proposer: Option<String>,
+    /// vote_signatures is a list of VoteSignature objects which
+    /// has a message_hash vec and the associated signatures from signers
+    /// This is considered as a list of offchain votes, which is being sent
+    /// to the contract for further sig verification, quorum validations.
+    pub vote_signatures: Vec<VoteSignature>,
+}
 
 #[cw_serde]
 pub struct InstantiateMsg {
@@ -38,35 +59,18 @@ pub struct InstantiateMsg {
     /// remain open until the DAO's treasury was large enough for it to be
     /// executed.
     pub close_proposal_on_execution_failure: bool,
-}
-
-/// TODO: Move this outside this module. Try finding the best place to include inside dao_proposal_single_instant
-#[cw_serde]
-pub struct SingleChoiceInstantProposeMsg {
-    /// The title of the proposal.
-    pub title: String,
-    /// A description of the proposal.
-    pub description: String,
-    /// The messages that should be executed in response to this
-    /// proposal passing.
-    pub msgs: Vec<CosmosMsg<Empty>>,
-    /// The address creating the proposal. If no pre-propose
-    /// module is attached to this module this must always be None
-    /// as the proposer is the sender of the propose message. If a
-    /// pre-propose module is attached, this must be Some and will
-    /// set the proposer of the proposal it creates.
-    pub proposer: Option<String>,
-    /// vote_signatures is a list of VoteSignature objects which
-    /// has a message_hash vec and the associated signatures from signers
-    /// This is considered as a list of offchain votes, which is being sent
-    /// to the contract for further sig verification, quorum validations.
-    pub vote_signatures: Vec<VoteSignature>,
+    /// Optional veto configuration for proposal execution.
+    /// If set, proposals can only be executed after the timelock
+    /// delay expiration.
+    /// During this period an oversight account (`veto.vetoer`) can
+    /// veto the proposal.
+    pub veto: Option<VetoConfig>,
 }
 
 #[cw_serde]
 pub enum ExecuteMsg {
     /// Creates a proposal in the module.
-    Propose(SingleChoiceInstantProposeMsg),
+    Propose(SingleChoiceInstantProposalMsg),
     /// Votes on a proposal. Voting power is determined by the DAO's
     /// voting power module.
     // Vote {
@@ -89,6 +93,11 @@ pub enum ExecuteMsg {
     /// executed by the DAO.
     // Execute {
     //     /// The ID of the proposal to execute.
+    //     proposal_id: u64,
+    // },
+    /// Callable only if veto is configured
+    // Veto {
+    //     /// The ID of the proposal to veto.
     //     proposal_id: u64,
     // },
     /// Closes a proposal that has failed (either not passed or timed
@@ -133,6 +142,9 @@ pub enum ExecuteMsg {
         /// remain open until the DAO's treasury was large enough for it to be
         /// executed.
         close_proposal_on_execution_failure: bool,
+        /// Optional time delay on proposal execution, during which the
+        /// proposal may be vetoed.
+        veto: Option<VetoConfig>,
     },
     /// Update's the proposal creation policy used for this
     /// module. Only the DAO may call this method.
@@ -242,6 +254,11 @@ pub enum MigrateMsg {
         /// no deposit or membership checks when submitting a proposal. The "ModuleMayPropose"
         /// option allows for instantiating a prepropose module which will handle deposit verification and return logic.
         pre_propose_info: PreProposeInfo,
+        /// This field was not present in DAO DAO v1. To migrate, a
+        /// value must be specified.
+        ///
+        /// optional configuration for veto feature
+        veto: Option<VetoConfig>,
     },
     FromCompatible {},
 }

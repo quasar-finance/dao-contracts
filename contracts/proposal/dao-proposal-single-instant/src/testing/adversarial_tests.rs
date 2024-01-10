@@ -1,19 +1,22 @@
 use crate::msg::InstantiateMsg;
 use crate::testing::instantiate::get_pre_propose_info;
 use crate::testing::{
-    execute::{close_proposal, make_proposal, mint_cw20s},
+    execute::{
+        close_proposal, execute_proposal, execute_proposal_should_fail, make_proposal, mint_cw20s,
+        vote_on_proposal,
+    },
     instantiate::{
         get_default_token_dao_proposal_module_instantiate,
         instantiate_with_staked_balances_governance,
     },
     queries::{query_balance_cw20, query_dao_token, query_proposal, query_single_proposal_module},
 };
-use cosmwasm_std::{to_binary, Addr, CosmosMsg, Decimal, Uint128, WasmMsg};
+use cosmwasm_std::{to_json_binary, Addr, CosmosMsg, Decimal, Uint128, WasmMsg};
 use cw20::Cw20Coin;
 use cw_multi_test::{next_block, App};
 use cw_utils::Duration;
 use dao_voting::{
-    deposit::{DepositRefundPolicy, UncheckedDepositInfo},
+    deposit::{DepositRefundPolicy, UncheckedDepositInfo, VotingModuleTokenType},
     status::Status,
     threshold::{PercentageThreshold, Threshold::AbsolutePercentage},
     voting::Vote,
@@ -63,8 +66,8 @@ fn test_execute_proposal_open() {
     assert_eq!(proposal.proposal.status, Status::Open);
 
     // attempt to execute and assert that it fails
-    // TODO: let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
-    // assert!(matches!(err, ContractError::NotPassed {}))
+    let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    assert!(matches!(err, ContractError::NotPassed {}))
 }
 
 // A proposal can be executed if and only if it passed.
@@ -81,13 +84,13 @@ fn test_execute_proposal_rejected_closed() {
     // Assert proposal is open and vote enough to reject it
     let proposal: ProposalResponse = query_proposal(&app, &proposal_module, 1);
     assert_eq!(proposal.proposal.status, Status::Open);
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::No,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::No,
+    );
 
     app.update_block(next_block);
 
@@ -96,8 +99,8 @@ fn test_execute_proposal_rejected_closed() {
     assert_eq!(proposal.proposal.status, Status::Rejected);
 
     // Attempt to execute
-    // TODO: let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
-    // assert!(matches!(err, ContractError::NotPassed {}));
+    let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    assert!(matches!(err, ContractError::NotPassed {}));
 
     app.update_block(next_block);
 
@@ -107,8 +110,8 @@ fn test_execute_proposal_rejected_closed() {
     assert_eq!(proposal.proposal.status, Status::Closed);
 
     // Attempt to execute
-    // TODO: let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
-    // assert!(matches!(err, ContractError::NotPassed {}))
+    let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    assert!(matches!(err, ContractError::NotPassed {}))
 }
 
 // A proposal can only be executed once. Any subsequent
@@ -124,29 +127,29 @@ fn test_execute_proposal_more_than_once() {
     // Assert proposal is open and vote enough to reject it
     let proposal: ProposalResponse = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::Open);
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
 
     app.update_block(next_block);
 
     // assert proposal is passed, execute it
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::Passed);
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
 
     app.update_block(next_block);
 
     // assert proposal executed and attempt to execute it again
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::Executed);
-    // TODO: let err: ContractError =
-    //     execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
-    // assert!(matches!(err, ContractError::NotPassed {}));
+    let err: ContractError =
+        execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    assert!(matches!(err, ContractError::NotPassed {}));
 }
 
 // After proposal is executed, no subsequent votes
@@ -157,6 +160,7 @@ pub fn test_executed_prop_state_remains_after_vote_swing() {
     let mut app = App::default();
 
     let instantiate = InstantiateMsg {
+        veto: None,
         threshold: AbsolutePercentage {
             percentage: PercentageThreshold::Percent(Decimal::percent(15)),
         },
@@ -167,7 +171,9 @@ pub fn test_executed_prop_state_remains_after_vote_swing() {
         pre_propose_info: get_pre_propose_info(
             &mut app,
             Some(UncheckedDepositInfo {
-                denom: dao_voting::deposit::DepositToken::VotingModuleToken {},
+                denom: dao_voting::deposit::DepositToken::VotingModuleToken {
+                    token_type: VotingModuleTokenType::Cw20,
+                },
                 amount: Uint128::new(10_000_000),
                 refund_policy: DepositRefundPolicy::OnlyPassed,
             }),
@@ -201,14 +207,14 @@ pub fn test_executed_prop_state_remains_after_vote_swing() {
     let proposal_id = make_proposal(&mut app, &proposal_module, CREATOR_ADDR, vec![]);
 
     // someone quickly votes, proposal gets executed
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     "threshold",
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        "threshold",
+        proposal_id,
+        Vote::Yes,
+    );
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
 
     app.update_block(next_block);
 
@@ -220,20 +226,20 @@ pub fn test_executed_prop_state_remains_after_vote_swing() {
 
     // someone wakes up and casts their vote to express their
     // opinion (not affecting the result of proposal)
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::No,
-    // );
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     "overslept_vote",
-    //     proposal_id,
-    //     Vote::No,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::No,
+    );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        "overslept_vote",
+        proposal_id,
+        Vote::No,
+    );
 
     app.update_block(next_block);
 
@@ -253,6 +259,7 @@ pub fn test_passed_prop_state_remains_after_vote_swing() {
     let mut app = App::default();
 
     let instantiate = InstantiateMsg {
+        veto: None,
         threshold: AbsolutePercentage {
             percentage: PercentageThreshold::Percent(Decimal::percent(15)),
         },
@@ -263,7 +270,9 @@ pub fn test_passed_prop_state_remains_after_vote_swing() {
         pre_propose_info: get_pre_propose_info(
             &mut app,
             Some(UncheckedDepositInfo {
-                denom: dao_voting::deposit::DepositToken::VotingModuleToken {},
+                denom: dao_voting::deposit::DepositToken::VotingModuleToken {
+                    token_type: VotingModuleTokenType::Cw20,
+                },
                 amount: Uint128::new(10_000_000),
                 refund_policy: DepositRefundPolicy::OnlyPassed,
             }),
@@ -298,7 +307,7 @@ pub fn test_passed_prop_state_remains_after_vote_swing() {
         recipient: "threshold".to_string(),
         amount: Uint128::new(100_000_000),
     };
-    let binary_msg = to_binary(&msg).unwrap();
+    let binary_msg = to_json_binary(&msg).unwrap();
 
     mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
     let proposal_id = make_proposal(
@@ -318,13 +327,13 @@ pub fn test_passed_prop_state_remains_after_vote_swing() {
     assert_eq!(balance, Uint128::zero());
 
     // vote enough to pass the proposal
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     "threshold",
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        "threshold",
+        proposal_id,
+        Vote::Yes,
+    );
 
     // assert proposal is passed with 20 votes in favor and none opposed
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
@@ -335,20 +344,20 @@ pub fn test_passed_prop_state_remains_after_vote_swing() {
     app.update_block(next_block);
 
     // the other voters wake up, vote against the proposal
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::No,
-    // );
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     "overslept_vote",
-    //     proposal_id,
-    //     Vote::No,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::No,
+    );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        "overslept_vote",
+        proposal_id,
+        Vote::No,
+    );
 
     app.update_block(next_block);
 
@@ -359,7 +368,7 @@ pub fn test_passed_prop_state_remains_after_vote_swing() {
     assert_eq!(proposal.proposal.votes.yes, Uint128::new(20));
     assert_eq!(proposal.proposal.votes.no, Uint128::new(80));
 
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
 
     app.update_block(next_block);
 

@@ -1,10 +1,10 @@
 #[cfg(test)]
 pub mod test_tube {
     use crate::contract::compute_sha256_hash;
-    use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposeMsg};
+    use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposalMsg};
     use crate::state::VoteSignature;
     use cosmwasm_std::testing::mock_dependencies;
-    use cosmwasm_std::{to_binary, Api, BankMsg, Coin, CosmosMsg, Uint128};
+    use cosmwasm_std::{to_json_binary, Api, BankMsg, Coin, CosmosMsg, Uint128};
     use cw_utils::Duration;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
     use dao_interface::state::Admin;
@@ -127,6 +127,7 @@ pub mod test_tube {
             allow_revoting: false,
             pre_propose_info: PreProposeInfo::AnyoneMayPropose {},
             close_proposal_on_execution_failure: true,
+            veto: None,
         };
         let dao_dao_core_instantiate_msg = InstantiateMsgCore {
             admin: Some(admin.address()),
@@ -137,14 +138,14 @@ pub mod test_tube {
             automatically_add_cw721s: true,
             proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
                 code_id: *code_ids.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
-                msg: to_binary(&prop_module_instantiate_msg).unwrap(),
+                msg: to_json_binary(&prop_module_instantiate_msg).unwrap(),
                 admin: Some(Admin::CoreModule {}),
                 funds: vec![],
                 label: "DAO DAO governance module".to_string(),
             }],
             voting_module_instantiate_info: ModuleInstantiateInfo {
                 code_id: *code_ids.get(SLUG_DAO_VOTING_CW4).unwrap(),
-                msg: to_binary(&vote_module_instantiate_msg).unwrap(),
+                msg: to_json_binary(&vote_module_instantiate_msg).unwrap(),
                 admin: Some(Admin::CoreModule {}),
                 funds: vec![],
                 label: "DAO DAO voting module".to_string(),
@@ -240,7 +241,7 @@ pub mod test_tube {
                 amount: Uint128::new(bank_send_amount),
             }],
         });
-        let execute_propose_msg_binary = to_binary(&execute_propose_msg).unwrap();
+        let execute_propose_msg_binary = to_json_binary(&execute_propose_msg).unwrap();
 
         // Creating different messages for each voter.
         // ... add as many messages as there are voters
@@ -338,7 +339,7 @@ pub mod test_tube {
         let _execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
-                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+                &ExecuteMsg::Propose(SingleChoiceInstantProposalMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
                     msgs: vec![execute_propose_msg],
@@ -407,7 +408,7 @@ pub mod test_tube {
         let execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
-                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+                &ExecuteMsg::Propose(SingleChoiceInstantProposalMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
                     msgs: vec![],
@@ -460,7 +461,7 @@ pub mod test_tube {
         let execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
-                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+                &ExecuteMsg::Propose(SingleChoiceInstantProposalMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
                     msgs: vec![],
@@ -511,7 +512,7 @@ pub mod test_tube {
         let execute_propose_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
-                &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+                &ExecuteMsg::Propose(SingleChoiceInstantProposalMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
                     msgs: vec![],

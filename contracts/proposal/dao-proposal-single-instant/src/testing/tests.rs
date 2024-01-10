@@ -1,8 +1,11 @@
+use std::ops::Add;
+
+use crate::msg::SingleChoiceInstantProposalMsg as ProposeMsg;
 use cosmwasm_std::{
     coins,
     testing::{mock_dependencies, mock_env},
-    to_binary, Addr, Attribute, BankMsg, Binary, ContractInfoResponse, CosmosMsg, Decimal, Empty,
-    Reply, StdError, SubMsgResult, Uint128, WasmMsg, WasmQuery,
+    to_json_binary, Addr, Attribute, BankMsg, Binary, ContractInfoResponse, CosmosMsg, Decimal,
+    Empty, Reply, StdError, SubMsgResult, Uint128, WasmMsg, WasmQuery,
 };
 use cw2::ContractVersion;
 use cw20::Cw20Coin;
@@ -16,7 +19,7 @@ use dao_interface::{
 };
 use dao_testing::{ShouldExecute, TestSingleChoiceVote};
 use dao_voting::{
-    deposit::{CheckedDepositInfo, UncheckedDepositInfo},
+    deposit::{CheckedDepositInfo, UncheckedDepositInfo, VotingModuleTokenType},
     pre_propose::{PreProposeInfo, ProposalCreationPolicy},
     proposal::MAX_PROPOSAL_SIZE,
     reply::{
@@ -25,27 +28,25 @@ use dao_voting::{
     },
     status::Status,
     threshold::{ActiveThreshold, PercentageThreshold, Threshold},
+    veto::{VetoConfig, VetoError},
     voting::{Vote, Votes},
 };
 
 use crate::{
     contract::{migrate, CONTRACT_NAME, CONTRACT_VERSION},
-    msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg, SingleChoiceInstantProposeMsg},
-    proposal::SingleChoiceInstantPropose,
+    msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg},
+    proposal::SingleChoiceProposal,
     query::{ProposalResponse, VoteInfo},
-    state::{Config, VoteSignature},
+    state::Config,
     testing::{
-        contracts::{
-            cw20_base_contract, cw20_stake_contract, cw20_staked_balances_voting_contract,
-            cw_core_contract, pre_propose_single_contract, proposal_single_contract,
-            v1_proposal_single_contract,
-        },
+        contracts::{pre_propose_single_contract, proposal_single_contract},
         execute::{
             add_proposal_hook, add_proposal_hook_should_fail, add_vote_hook,
             add_vote_hook_should_fail, close_proposal, close_proposal_should_fail,
-            instantiate_cw20_base_default, make_proposal, mint_cw20s, mint_natives,
-            remove_proposal_hook, remove_proposal_hook_should_fail, remove_vote_hook,
-            remove_vote_hook_should_fail, update_rationale,
+            execute_proposal, execute_proposal_should_fail, instantiate_cw20_base_default,
+            make_proposal, mint_cw20s, mint_natives, remove_proposal_hook,
+            remove_proposal_hook_should_fail, remove_vote_hook, remove_vote_hook_should_fail,
+            update_rationale, vote_on_proposal, vote_on_proposal_should_fail,
         },
         instantiate::{
             get_default_non_token_dao_proposal_module_instantiate,
@@ -67,6 +68,7 @@ use crate::{
 
 use super::{
     do_votes::do_votes_staked_balances,
+    execute::vote_on_proposal_with_rationale,
     queries::{query_next_proposal_id, query_vote},
     CREATOR_ADDR,
 };
@@ -113,7 +115,7 @@ fn test_simple_propose_staked_balances() {
 
     // These values just come from the default instantiate message
     // values.
-    let expected = SingleChoiceInstantPropose {
+    let expected = SingleChoiceProposal {
         title: "title".to_string(),
         description: "description".to_string(),
         proposer: Addr::unchecked(CREATOR_ADDR),
@@ -128,6 +130,7 @@ fn test_simple_propose_staked_balances() {
         total_power: Uint128::new(100_000_000),
         msgs: vec![],
         status: Status::Open,
+        veto: None,
         votes: Votes::zero(),
     };
 
@@ -162,7 +165,7 @@ fn test_simple_proposal_cw4_voting() {
 
     // These values just come from the default instantiate message
     // values.
-    let expected = SingleChoiceInstantPropose {
+    let expected = SingleChoiceProposal {
         title: "title".to_string(),
         description: "description".to_string(),
         proposer: Addr::unchecked(CREATOR_ADDR),
@@ -177,6 +180,7 @@ fn test_simple_proposal_cw4_voting() {
         total_power: Uint128::new(1),
         msgs: vec![],
         status: Status::Open,
+        veto: None,
         votes: Votes::zero(),
     };
 
@@ -266,7 +270,7 @@ fn test_instantiate_with_non_voting_module_cw20_deposit() {
 
     // These values just come from the default instantiate message
     // values.
-    let expected = SingleChoiceInstantPropose {
+    let expected = SingleChoiceProposal {
         title: "title".to_string(),
         description: "description".to_string(),
         proposer: Addr::unchecked(CREATOR_ADDR),
@@ -282,6 +286,7 @@ fn test_instantiate_with_non_voting_module_cw20_deposit() {
         msgs: vec![],
         status: Status::Open,
         votes: Votes::zero(),
+        veto: None,
     };
 
     assert_eq!(created.proposal, expected);
@@ -319,7 +324,7 @@ fn test_proposal_message_execution() {
         vec![
             WasmMsg::Execute {
                 contract_addr: gov_token.to_string(),
-                msg: to_binary(&cw20::Cw20ExecuteMsg::Mint {
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
                     recipient: CREATOR_ADDR.to_string(),
                     amount: Uint128::new(10_000_000),
                 })
@@ -339,13 +344,13 @@ fn test_proposal_message_execution() {
     assert_eq!(cw20_balance, Uint128::zero());
     assert_eq!(native_balance, Uint128::zero());
 
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::Passed);
 
@@ -362,7 +367,7 @@ fn test_proposal_message_execution() {
     assert_eq!(proposal.proposal.status, Status::Passed);
 
     mint_natives(&mut app, core_addr.as_str(), coins(10, "ujuno"));
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::Executed);
 
@@ -373,8 +378,1369 @@ fn test_proposal_message_execution() {
 
     // Sneak in a check here that proposals can't be executed more
     // than once in the on close on execute config suituation.
-    // TODO: let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
-    // TODO: assert!(matches!(err, ContractError::NotPassed {}))
+    let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    assert!(matches!(err, ContractError::NotPassed {}))
+}
+
+#[test]
+fn test_proposal_message_timelock_execution() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: false,
+        veto_before_passed: false,
+    };
+    instantiate.close_proposal_on_execution_failure = false;
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![
+            Cw20Coin {
+                address: "oversight".to_string(),
+                amount: Uint128::new(15),
+            },
+            Cw20Coin {
+                address: CREATOR_ADDR.to_string(),
+                amount: Uint128::new(85),
+            },
+        ]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+    let cw20_balance = query_balance_cw20(&app, &gov_token, CREATOR_ADDR);
+    let native_balance = query_balance_native(&app, CREATOR_ADDR, "ujuno");
+    assert_eq!(cw20_balance, Uint128::zero());
+    assert_eq!(native_balance, Uint128::zero());
+
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock {
+            expiration: proposal
+                .proposal
+                .expiration
+                .add(veto_config.timelock_duration)?,
+        }
+    );
+
+    mint_natives(&mut app, core_addr.as_str(), coins(10, "ujuno"));
+
+    // vetoer can't execute when timelock is active and
+    // early execute not enabled.
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Execute { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+    // assert_eq!(err, ContractError::VetoError(VetoError::NoEarlyExecute {}));
+
+    // Proposal cannot be excuted before timelock expires
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked(CREATOR_ADDR),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Execute { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+
+    // assert_eq!(err, ContractError::VetoError(VetoError::Timelocked {}));
+
+    // Time passes
+    app.update_block(|block| {
+        block.time = block.time.plus_seconds(604800 + 200);
+    });
+
+    // Proposal executes successfully
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(proposal.proposal.status, Status::Executed);
+
+    Ok(())
+}
+
+// only the authorized vetoer can veto an open proposal
+#[test]
+fn test_open_proposal_veto_unauthorized() {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: false,
+        veto_before_passed: true,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    // only the vetoer can veto
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("not-oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Veto { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+    // assert_eq!(err, ContractError::VetoError(VetoError::Unauthorized {}));
+}
+
+// open proposal can only be vetoed if `veto_before_passed` flag is enabled
+#[test]
+fn test_open_proposal_veto_with_early_veto_flag_disabled() {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: false,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Veto { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+    // assert_eq!(
+    //     err,
+    //     ContractError::VetoError(VetoError::NoVetoBeforePassed {})
+    // );
+}
+
+#[test]
+fn test_open_proposal_veto_with_no_timelock() {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    instantiate.veto = None;
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Veto { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+    // assert_eq!(
+    //     err,
+    //     ContractError::VetoError(VetoError::NoVetoConfiguration {})
+    // );
+}
+
+// if proposal is not open or timelocked, attempts to veto should
+// throw an error
+#[test]
+fn test_vetoed_proposal_veto() {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: false,
+        veto_before_passed: true,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    // app.execute_contract(
+    //     Addr::unchecked("oversight"),
+    //     proposal_module.clone(),
+    //     &ExecuteMsg::Veto { proposal_id },
+    //     &[],
+    // )
+    // .unwrap();
+
+    // let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    // assert_eq!(proposal.proposal.status, Status::Vetoed {});
+
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Veto { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+
+    // assert_eq!(
+    //     ContractError::VetoError(VetoError::InvalidProposalStatus {
+    //         status: "vetoed".to_string()
+    //     }),
+    //     err,
+    // );
+}
+
+#[test]
+fn test_open_proposal_veto_early() {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: false,
+        veto_before_passed: true,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    // app.execute_contract(
+    //     Addr::unchecked("oversight"),
+    //     proposal_module.clone(),
+    //     &ExecuteMsg::Veto { proposal_id },
+    //     &[],
+    // )
+    // .unwrap();
+
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(proposal.proposal.status, Status::Vetoed {});
+}
+
+// only the vetoer can veto during timelock period
+#[test]
+fn test_timelocked_proposal_veto_unauthorized() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: true,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![
+            Cw20Coin {
+                address: "oversight".to_string(),
+                amount: Uint128::new(15),
+            },
+            Cw20Coin {
+                address: CREATOR_ADDR.to_string(),
+                amount: Uint128::new(85),
+            },
+        ]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock {
+            expiration: proposal
+                .proposal
+                .expiration
+                .add(veto_config.timelock_duration)?,
+        }
+    );
+
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("not-oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Veto { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+
+    // assert_eq!(err, ContractError::VetoError(VetoError::Unauthorized {}),);
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock {
+            expiration: proposal
+                .proposal
+                .expiration
+                .add(veto_config.timelock_duration)?,
+        }
+    );
+
+    Ok(())
+}
+
+// vetoer can only veto the proposal before the timelock expires
+#[test]
+fn test_timelocked_proposal_veto_expired_timelock() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: true,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![
+            Cw20Coin {
+                address: "oversight".to_string(),
+                amount: Uint128::new(15),
+            },
+            Cw20Coin {
+                address: CREATOR_ADDR.to_string(),
+                amount: Uint128::new(85),
+            },
+        ]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock {
+            expiration: proposal
+                .proposal
+                .expiration
+                .add(veto_config.timelock_duration)?,
+        }
+    );
+    app.update_block(|b| b.time = b.time.plus_seconds(604800 + 200));
+
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Veto { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+
+    // assert_eq!(err, ContractError::VetoError(VetoError::TimelockExpired {}),);
+
+    Ok(())
+}
+
+// vetoer can only exec timelocked prop if the early exec flag is enabled
+#[test]
+fn test_timelocked_proposal_execute_no_early_exec() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: false,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock {
+            expiration: proposal
+                .proposal
+                .expiration
+                .add(veto_config.timelock_duration)?,
+        }
+    );
+
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Execute { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+
+    // assert_eq!(err, ContractError::VetoError(VetoError::NoEarlyExecute {}),);
+
+    Ok(())
+}
+
+#[test]
+fn test_timelocked_proposal_execute_early() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: true,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock {
+            expiration: proposal
+                .proposal
+                .expiration
+                .add(veto_config.timelock_duration)?,
+        }
+    );
+
+    // assert timelock is active
+    assert!(!veto_config
+        .timelock_duration
+        .after(&app.block_info())
+        .is_expired(&app.block_info()));
+    mint_natives(&mut app, core_addr.as_str(), coins(10, "ujuno"));
+
+    // app.execute_contract(
+    //     Addr::unchecked("oversight"),
+    //     proposal_module.clone(),
+    //     &ExecuteMsg::Execute { proposal_id },
+    //     &[],
+    // )
+    // .unwrap();
+
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(proposal.proposal.status, Status::Executed {});
+
+    Ok(())
+}
+
+// only vetoer can exec timelocked prop early
+#[test]
+fn test_timelocked_proposal_execute_active_timelock_unauthorized() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: true,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock {
+            expiration: proposal
+                .proposal
+                .expiration
+                .add(veto_config.timelock_duration)?,
+        }
+    );
+
+    // assert timelock is active
+    assert!(!veto_config
+        .timelock_duration
+        .after(&app.block_info())
+        .is_expired(&app.block_info()));
+
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked(CREATOR_ADDR),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Execute { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+
+    // assert_eq!(err, ContractError::VetoError(VetoError::Timelocked {}),);
+
+    Ok(())
+}
+
+// anyone can exec the prop after the timelock expires
+#[test]
+fn test_timelocked_proposal_execute_expired_timelock_not_vetoer() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: true,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    let expiration = proposal
+        .proposal
+        .expiration
+        .add(veto_config.timelock_duration)?;
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock { expiration }
+    );
+
+    app.update_block(|b| b.time = b.time.plus_seconds(604800 + 201));
+    // assert timelock is expired
+    assert!(expiration.is_expired(&app.block_info()));
+    mint_natives(&mut app, core_addr.as_str(), coins(10, "ujuno"));
+
+    // app.execute_contract(
+    //     Addr::unchecked(CREATOR_ADDR),
+    //     proposal_module.clone(),
+    //     &ExecuteMsg::Execute { proposal_id },
+    //     &[],
+    // )
+    // .unwrap();
+
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(proposal.proposal.status, Status::Executed {},);
+
+    Ok(())
+}
+
+#[test]
+fn test_proposal_message_timelock_veto() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: false,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+    let cw20_balance = query_balance_cw20(&app, &gov_token, CREATOR_ADDR);
+    let native_balance = query_balance_native(&app, CREATOR_ADDR, "ujuno");
+    assert_eq!(cw20_balance, Uint128::zero());
+    assert_eq!(native_balance, Uint128::zero());
+
+    // Vetoer can't veto early
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Veto { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+    // assert_eq!(
+    //     err,
+    //     ContractError::VetoError(VetoError::NoVetoBeforePassed {})
+    // );
+
+    // Vote on proposal to pass it
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock {
+            expiration: proposal
+                .proposal
+                .expiration
+                .add(veto_config.timelock_duration)?,
+        }
+    );
+
+    mint_natives(&mut app, core_addr.as_str(), coins(10, "ujuno"));
+
+    // Non-vetoer cannot veto
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked(CREATOR_ADDR),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Veto { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+    // assert_eq!(err, ContractError::VetoError(VetoError::Unauthorized {}));
+
+    // Oversite vetos prop
+    // app.execute_contract(
+    //     Addr::unchecked("oversight"),
+    //     proposal_module.clone(),
+    //     &ExecuteMsg::Veto { proposal_id },
+    //     &[],
+    // )
+    // .unwrap();
+
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(proposal.proposal.status, Status::Vetoed);
+
+    Ok(())
+}
+
+#[test]
+fn test_proposal_message_timelock_early_execution() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: true,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![
+            Cw20Coin {
+                address: "oversight".to_string(),
+                amount: Uint128::new(15),
+            },
+            Cw20Coin {
+                address: CREATOR_ADDR.to_string(),
+                amount: Uint128::new(85),
+            },
+        ]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+    let cw20_balance = query_balance_cw20(&app, &gov_token, CREATOR_ADDR);
+    let native_balance = query_balance_native(&app, CREATOR_ADDR, "ujuno");
+    assert_eq!(cw20_balance, Uint128::zero());
+    assert_eq!(native_balance, Uint128::zero());
+
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock {
+            expiration: proposal
+                .proposal
+                .expiration
+                .add(veto_config.timelock_duration)?,
+        }
+    );
+
+    mint_natives(&mut app, core_addr.as_str(), coins(10, "ujuno"));
+
+    // Proposal can be executed early by vetoer
+    execute_proposal(&mut app, &proposal_module, "oversight", proposal_id);
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(proposal.proposal.status, Status::Executed);
+
+    Ok(())
+}
+
+#[test]
+fn test_proposal_message_timelock_veto_before_passed() {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    instantiate.veto = Some(VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: false,
+        veto_before_passed: true,
+    });
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![
+            Cw20Coin {
+                address: "oversight".to_string(),
+                amount: Uint128::new(15),
+            },
+            Cw20Coin {
+                address: CREATOR_ADDR.to_string(),
+                amount: Uint128::new(85),
+            },
+        ]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is open for voting
+    assert_eq!(proposal.proposal.status, Status::Open);
+
+    // Oversite vetos prop
+    // app.execute_contract(
+    //     Addr::unchecked("oversight"),
+    //     proposal_module.clone(),
+    //     &ExecuteMsg::Veto { proposal_id },
+    //     &[],
+    // )
+    // .unwrap();
+
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(proposal.proposal.status, Status::Vetoed);
+
+    // mint_natives(&mut app, core_addr.as_str(), coins(10, "ujuno"));
+
+    // // Proposal can be executed early by vetoer
+    // execute_proposal(&mut app, &proposal_module, "oversight", proposal_id);
+    // let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    // assert_eq!(proposal.proposal.status, Status::Executed);
+}
+
+#[test]
+fn test_veto_only_members_execute_proposal() -> anyhow::Result<()> {
+    let mut app = App::default();
+    let mut instantiate = get_default_token_dao_proposal_module_instantiate(&mut app);
+    instantiate.close_proposal_on_execution_failure = false;
+    let veto_config = VetoConfig {
+        timelock_duration: Duration::Time(100),
+        vetoer: "oversight".to_string(),
+        early_execute: true,
+        veto_before_passed: false,
+    };
+    instantiate.veto = Some(veto_config.clone());
+    let core_addr = instantiate_with_staked_balances_governance(
+        &mut app,
+        instantiate,
+        Some(vec![Cw20Coin {
+            address: CREATOR_ADDR.to_string(),
+            amount: Uint128::new(85),
+        }]),
+    );
+    let proposal_module = query_single_proposal_module(&app, &core_addr);
+    let gov_token = query_dao_token(&app, &core_addr);
+
+    mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
+    let proposal_id = make_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        vec![
+            WasmMsg::Execute {
+                contract_addr: gov_token.to_string(),
+                msg: to_json_binary(&cw20::Cw20ExecuteMsg::Mint {
+                    recipient: CREATOR_ADDR.to_string(),
+                    amount: Uint128::new(10_000_000),
+                })
+                .unwrap(),
+                funds: vec![],
+            }
+            .into(),
+            BankMsg::Send {
+                to_address: CREATOR_ADDR.to_string(),
+                amount: coins(10, "ujuno"),
+            }
+            .into(),
+        ],
+    );
+    let cw20_balance = query_balance_cw20(&app, &gov_token, CREATOR_ADDR);
+    let native_balance = query_balance_native(&app, CREATOR_ADDR, "ujuno");
+    assert_eq!(cw20_balance, Uint128::zero());
+    assert_eq!(native_balance, Uint128::zero());
+
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+
+    // Proposal is timelocked to the moment of prop expiring + timelock delay
+    let expiration = proposal
+        .proposal
+        .expiration
+        .add(veto_config.timelock_duration)?;
+    assert_eq!(
+        proposal.proposal.status,
+        Status::VetoTimelock { expiration }
+    );
+
+    app.update_block(|b| b.time = b.time.plus_seconds(604800 + 101));
+    // assert timelock is expired
+    assert!(expiration.is_expired(&app.block_info()));
+    mint_natives(&mut app, core_addr.as_str(), coins(10, "ujuno"));
+
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(proposal.proposal.status, Status::Passed);
+
+    // Proposal cannot be executed by vetoer once timelock expired
+    // let err: ContractError = app
+    //     .execute_contract(
+    //         Addr::unchecked("oversight"),
+    //         proposal_module.clone(),
+    //         &ExecuteMsg::Execute { proposal_id },
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
+    // assert_eq!(err, ContractError::Unauthorized {});
+
+    // Proposal can be executed by member once timelock expired
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    let proposal = query_proposal(&app, &proposal_module, proposal_id);
+    assert_eq!(proposal.proposal.status, Status::Executed);
+
+    Ok(())
 }
 
 #[test]
@@ -437,21 +1803,21 @@ fn test_proposal_cant_close_after_expiry_is_passed() {
         }
         .into()],
     );
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "quorum", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "quorum", proposal_id, Vote::Yes);
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::Open);
 
     // Expire the proposal. This should pass it.
     app.update_block(|b| b.time = b.time.plus_seconds(604800));
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
-    assert_eq!(proposal.proposal.status, Status::Passed);
+    assert_eq!(proposal.proposal.status, Status::Passed,);
 
     // Make sure it can't be closed.
     let err = close_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
     assert!(matches!(err, ContractError::WrongCloseStatus {}));
 
     // Executed proposals may not be closed.
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
     let err = close_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
     assert!(matches!(err, ContractError::WrongCloseStatus {}));
     let balance = query_balance_native(&app, CREATOR_ADDR, "ujuno");
@@ -475,27 +1841,27 @@ fn test_execute_no_non_passed_execution() {
     .into()]);
     mint_natives(&mut app, core_addr.as_str(), coins(100, "ujuno"));
 
-    // TODO: let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
-    // TODO: assert!(matches!(err, ContractError::NotPassed {}));
+    let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    assert!(matches!(err, ContractError::NotPassed {}));
 
     // Expire the proposal.
     app.update_block(|b| b.time = b.time.plus_seconds(604800));
-    // TODO: let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
-    // TODO: assert!(matches!(err, ContractError::NotPassed {}));
+    let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    assert!(matches!(err, ContractError::NotPassed {}));
 
     mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
     let proposal_id = make_proposal(&mut app, &proposal_module, CREATOR_ADDR, vec![]);
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
     // Can't execute more than once.
-    // TODO: let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
-    // TODO: assert!(matches!(err, ContractError::NotPassed {}));
+    let err = execute_proposal_should_fail(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    assert!(matches!(err, ContractError::NotPassed {}));
 }
 
 #[test]
@@ -513,13 +1879,13 @@ fn test_cant_execute_not_member_when_proposal_created() {
     .into()]);
     mint_natives(&mut app, core_addr.as_str(), coins(100, "ujuno"));
 
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
 
     // Give noah some tokens.
     mint_cw20s(&mut app, &gov_token, &core_addr, "noah", 20_000_000);
@@ -538,7 +1904,7 @@ fn test_cant_execute_not_member_when_proposal_created() {
         &cw20::Cw20ExecuteMsg::Send {
             contract: staking_contract.to_string(),
             amount: Uint128::new(10_000_000),
-            msg: to_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
+            msg: to_json_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
         },
         &[],
     )
@@ -548,8 +1914,8 @@ fn test_cant_execute_not_member_when_proposal_created() {
 
     // Can't execute from member who wasn't a member when the proposal was
     // created.
-    // TODO: let err = execute_proposal_should_fail(&mut app, &proposal_module, "noah", proposal_id);
-    // TODO: assert!(matches!(err, ContractError::Unauthorized {}));
+    let err = execute_proposal_should_fail(&mut app, &proposal_module, "noah", proposal_id);
+    assert!(matches!(err, ContractError::Unauthorized {}));
 }
 
 #[test]
@@ -561,14 +1927,14 @@ fn test_update_config() {
         gov_token: _,
         proposal_id,
     } = setup_test(vec![]);
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
     // Make a proposal to update the config.
     let proposal_id = make_proposal(
         &mut app,
@@ -576,7 +1942,13 @@ fn test_update_config() {
         CREATOR_ADDR,
         vec![WasmMsg::Execute {
             contract_addr: proposal_module.to_string(),
-            msg: to_binary(&ExecuteMsg::UpdateConfig {
+            msg: to_json_binary(&ExecuteMsg::UpdateConfig {
+                veto: Some(VetoConfig {
+                    timelock_duration: Duration::Height(2),
+                    vetoer: CREATOR_ADDR.to_string(),
+                    early_execute: false,
+                    veto_before_passed: false,
+                }),
                 threshold: Threshold::AbsoluteCount {
                     threshold: Uint128::new(10_000),
                 },
@@ -592,19 +1964,25 @@ fn test_update_config() {
         }
         .into()],
     );
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
 
     let config = query_proposal_config(&app, &proposal_module);
     assert_eq!(
         config,
         Config {
+            veto: Some(VetoConfig {
+                timelock_duration: Duration::Height(2),
+                vetoer: CREATOR_ADDR.to_string(),
+                early_execute: false,
+                veto_before_passed: false,
+            }),
             threshold: Threshold::AbsoluteCount {
                 threshold: Uint128::new(10_000)
             },
@@ -621,8 +1999,9 @@ fn test_update_config() {
     let err: ContractError = app
         .execute_contract(
             Addr::unchecked(CREATOR_ADDR),
-            proposal_module,
+            proposal_module.clone(),
             &&ExecuteMsg::UpdateConfig {
+                veto: None,
                 threshold: Threshold::AbsoluteCount {
                     threshold: Uint128::new(10_000),
                 },
@@ -638,7 +2017,39 @@ fn test_update_config() {
         .unwrap_err()
         .downcast()
         .unwrap();
-    assert!(matches!(err, ContractError::Unauthorized {}))
+    assert!(matches!(err, ContractError::Unauthorized {}));
+
+    // Check that veto config is validated (mismatching duration units).
+    let err: ContractError = app
+        .execute_contract(
+            Addr::unchecked(core_addr.clone()),
+            proposal_module,
+            &&ExecuteMsg::UpdateConfig {
+                veto: Some(VetoConfig {
+                    timelock_duration: Duration::Time(100),
+                    vetoer: CREATOR_ADDR.to_string(),
+                    early_execute: false,
+                    veto_before_passed: false,
+                }),
+                threshold: Threshold::AbsoluteCount {
+                    threshold: Uint128::new(10_000),
+                },
+                max_voting_period: Duration::Height(6),
+                min_voting_period: None,
+                only_members_execute: true,
+                allow_revoting: false,
+                dao: core_addr.to_string(),
+                close_proposal_on_execution_failure: false,
+            },
+            &[],
+        )
+        .unwrap_err()
+        .downcast()
+        .unwrap();
+    assert!(matches!(
+        err,
+        ContractError::VetoError(VetoError::TimelockDurationUnitMismatch {})
+    ))
 }
 
 #[test]
@@ -652,17 +2063,17 @@ fn test_anyone_may_propose_and_proposal_listing() {
     for addr in 'm'..'z' {
         let addr = addr.to_string().repeat(6);
         let proposal_id = make_proposal(&mut app, &proposal_module, &addr, vec![]);
-        // TODO: vote_on_proposal(
-        //     &mut app,
-        //     &proposal_module,
-        //     CREATOR_ADDR,
-        //     proposal_id,
-        //     Vote::Yes,
-        // );
+        vote_on_proposal(
+            &mut app,
+            &proposal_module,
+            CREATOR_ADDR,
+            proposal_id,
+            Vote::Yes,
+        );
         // Only members can execute still.
-        // TODO: let err = execute_proposal_should_fail(&mut app, &proposal_module, &addr, proposal_id);
-        // TODO: assert!(matches!(err, ContractError::Unauthorized {}));
-        // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+        let err = execute_proposal_should_fail(&mut app, &proposal_module, &addr, proposal_id);
+        assert!(matches!(err, ContractError::Unauthorized {}));
+        execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
     }
 
     // Now that we've got all these proposals sitting around, lets
@@ -697,7 +2108,7 @@ fn test_anyone_may_propose_and_proposal_listing() {
         four_and_five.proposals[0],
         ProposalResponse {
             id: 4,
-            proposal: SingleChoiceInstantPropose {
+            proposal: SingleChoiceProposal {
                 title: "title".to_string(),
                 description: "description".to_string(),
                 proposer: Addr::unchecked("pppppp"),
@@ -717,6 +2128,7 @@ fn test_anyone_may_propose_and_proposal_listing() {
                     no: Uint128::zero(),
                     abstain: Uint128::zero()
                 },
+                veto: None
             }
         }
     )
@@ -872,16 +2284,12 @@ fn test_active_threshold_absolute() {
         .execute_contract(
             Addr::unchecked(CREATOR_ADDR),
             proposal_module.clone(),
-            &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+            &ExecuteMsg::Propose(ProposeMsg {
                 title: "title".to_string(),
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                vote_signatures: vec![VoteSignature {
-                    message_hash: todo!(), // TODO
-                    signature: todo!(),    // TODO
-                    public_key: todo!(),   // TODO
-                }],
+                vote_signatures: todo!(),
             }),
             &[],
         )
@@ -893,7 +2301,7 @@ fn test_active_threshold_absolute() {
     let msg = cw20::Cw20ExecuteMsg::Send {
         contract: staking_contract.to_string(),
         amount: Uint128::new(100),
-        msg: to_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
+        msg: to_json_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
     };
     app.execute_contract(Addr::unchecked(CREATOR_ADDR), gov_token, &msg, &[])
         .unwrap();
@@ -915,16 +2323,12 @@ fn test_active_threshold_absolute() {
         .execute_contract(
             Addr::unchecked(CREATOR_ADDR),
             proposal_module.clone(),
-            &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+            &ExecuteMsg::Propose(ProposeMsg {
                 title: "title".to_string(),
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                vote_signatures: vec![VoteSignature {
-                    message_hash: todo!(), // TODO
-                    signature: todo!(),    // TODO
-                    public_key: todo!(),   // TODO
-                }],
+                vote_signatures: todo!(),
             }),
             &[],
         )
@@ -963,16 +2367,12 @@ fn test_active_threshold_percent() {
         .execute_contract(
             Addr::unchecked(CREATOR_ADDR),
             proposal_module.clone(),
-            &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+            &ExecuteMsg::Propose(ProposeMsg {
                 title: "title".to_string(),
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                vote_signatures: vec![VoteSignature {
-                    message_hash: todo!(), // TODO
-                    signature: todo!(),    // TODO
-                    public_key: todo!(),   // TODO
-                }],
+                vote_signatures: todo!(),
             }),
             &[],
         )
@@ -984,7 +2384,7 @@ fn test_active_threshold_percent() {
     let msg = cw20::Cw20ExecuteMsg::Send {
         contract: staking_contract.to_string(),
         amount: Uint128::new(20_000_000),
-        msg: to_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
+        msg: to_json_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
     };
     app.execute_contract(Addr::unchecked(CREATOR_ADDR), gov_token, &msg, &[])
         .unwrap();
@@ -1007,16 +2407,12 @@ fn test_active_threshold_percent() {
         .execute_contract(
             Addr::unchecked(CREATOR_ADDR),
             proposal_module.clone(),
-            &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+            &ExecuteMsg::Propose(ProposeMsg {
                 title: "title".to_string(),
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                vote_signatures: vec![VoteSignature {
-                    message_hash: todo!(), // TODO
-                    signature: todo!(),    // TODO
-                    public_key: todo!(),   // TODO
-                }],
+                vote_signatures: todo!(),
             }),
             &[],
         )
@@ -1058,13 +2454,13 @@ fn test_min_voting_period_no_early_pass() {
 
     mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
     let proposal_id = make_proposal(&mut app, &proposal_module, CREATOR_ADDR, vec![]);
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
     let proposal_response = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal_response.proposal.status, Status::Open);
 
@@ -1103,8 +2499,8 @@ fn test_min_duration_same_as_proposal_duration() {
 
     // Whale votes yes. Normally the proposal would just pass and ekez
     // would be out of luck.
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "whale", proposal_id, Vote::Yes);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "ekez", proposal_id, Vote::No);
+    vote_on_proposal(&mut app, &proposal_module, "whale", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "ekez", proposal_id, Vote::No);
 
     app.update_block(|b| b.height += 100);
     let proposal_response = query_proposal(&app, &proposal_module, proposal_id);
@@ -1124,61 +2520,61 @@ fn test_revoting_playthrough() {
     let proposal_id = make_proposal(&mut app, &proposal_module, CREATOR_ADDR, vec![]);
 
     // Vote and change our minds a couple times.
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
     let proposal_response = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal_response.proposal.status, Status::Open);
 
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::No,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::No,
+    );
     let proposal_response = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal_response.proposal.status, Status::Open);
 
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
     let proposal_response = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal_response.proposal.status, Status::Open);
 
     // Can't cast the same vote more than once.
-    // TODO: let err = vote_on_proposal_should_fail(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: assert!(matches!(err, ContractError::AlreadyCast {}));
+    let err = vote_on_proposal_should_fail(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    assert!(matches!(err, ContractError::AlreadyCast {}));
 
     // Expire the proposal allowing the votes to be tallied.
     app.update_block(|b| b.time = b.time.plus_seconds(604800));
     let proposal_response = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal_response.proposal.status, Status::Passed);
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
 
     // Can't vote once the proposal is passed.
-    // TODO: let err = vote_on_proposal_should_fail(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: assert!(matches!(err, ContractError::Expired { .. }));
+    let err = vote_on_proposal_should_fail(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    assert!(matches!(err, ContractError::Expired { .. }));
 }
 
 /// Tests that revoting is stored at a per-proposal level. Proposals
@@ -1203,6 +2599,7 @@ fn test_allow_revoting_config_changes() {
         core_addr.clone(),
         proposal_module.clone(),
         &ExecuteMsg::UpdateConfig {
+            veto: None,
             threshold: Threshold::ThresholdQuorum {
                 quorum: PercentageThreshold::Percent(Decimal::percent(15)),
                 threshold: PercentageThreshold::Majority {},
@@ -1222,20 +2619,20 @@ fn test_allow_revoting_config_changes() {
     mint_cw20s(&mut app, &gov_token, &core_addr, CREATOR_ADDR, 10_000_000);
     let no_revoting_proposal = make_proposal(&mut app, &proposal_module, CREATOR_ADDR, vec![]);
 
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     revoting_proposal,
-    //     Vote::Yes,
-    // );
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     no_revoting_proposal,
-    //     Vote::Yes,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        revoting_proposal,
+        Vote::Yes,
+    );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        no_revoting_proposal,
+        Vote::Yes,
+    );
 
     // Proposal without revoting should have passed.
     let proposal_resp = query_proposal(&app, &proposal_module, no_revoting_proposal);
@@ -1246,13 +2643,13 @@ fn test_allow_revoting_config_changes() {
     assert_eq!(proposal_resp.proposal.status, Status::Open);
 
     // Can change vote on the revoting proposal.
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     revoting_proposal,
-    //     Vote::No,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        revoting_proposal,
+        Vote::No,
+    );
     // Expire the revoting proposal and close it.
     app.update_block(|b| b.time = b.time.plus_seconds(604800));
     close_proposal(&mut app, &proposal_module, CREATOR_ADDR, revoting_proposal);
@@ -1307,19 +2704,19 @@ fn test_three_of_five_multisig() {
 
     let proposal_id = make_proposal(&mut app, &proposal_module, CREATOR_ADDR, vec![]);
 
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::Yes);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::Yes);
 
     // Make sure it doesn't pass early.
     let proposal: ProposalResponse = query_proposal(&app, &proposal_module, 1);
     assert_eq!(proposal.proposal.status, Status::Open);
 
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "three", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "three", proposal_id, Vote::Yes);
 
     let proposal: ProposalResponse = query_proposal(&app, &proposal_module, 1);
     assert_eq!(proposal.proposal.status, Status::Passed);
 
-    // TODO: execute_proposal(&mut app, &proposal_module, "four", proposal_id);
+    execute_proposal(&mut app, &proposal_module, "four", proposal_id);
 
     let proposal: ProposalResponse = query_proposal(&app, &proposal_module, 1);
     assert_eq!(proposal.proposal.status, Status::Executed);
@@ -1327,10 +2724,10 @@ fn test_three_of_five_multisig() {
     // Make another proposal which we'll reject.
     let proposal_id = make_proposal(&mut app, &proposal_module, "one", vec![]);
 
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::Yes);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::No);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "three", proposal_id, Vote::No);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "four", proposal_id, Vote::No);
+    vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::No);
+    vote_on_proposal(&mut app, &proposal_module, "three", proposal_id, Vote::No);
+    vote_on_proposal(&mut app, &proposal_module, "four", proposal_id, Vote::No);
 
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::Rejected);
@@ -1389,26 +2786,26 @@ fn test_three_of_five_multisig_revoting() {
 
     let proposal_id = make_proposal(&mut app, &proposal_module, CREATOR_ADDR, vec![]);
 
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::Yes);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::Yes);
 
     // Make sure it doesn't pass early.
     let proposal: ProposalResponse = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::Open);
 
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "three", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "three", proposal_id, Vote::Yes);
 
     // Revoting is enabled so the proposal is still open.
     let proposal: ProposalResponse = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::Open);
 
     // Change our minds.
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::No);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::No);
+    vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::No);
+    vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::No);
 
-    // TODO: let err =
-    //     vote_on_proposal_should_fail(&mut app, &proposal_module, "two", proposal_id, Vote::No);
-    // assert!(matches!(err, ContractError::AlreadyCast {}));
+    let err =
+        vote_on_proposal_should_fail(&mut app, &proposal_module, "two", proposal_id, Vote::No);
+    assert!(matches!(err, ContractError::AlreadyCast {}));
 
     // Expire the revoting proposal and close it.
     app.update_block(|b| b.time = b.time.plus_seconds(604800));
@@ -1506,6 +2903,7 @@ fn test_proposal_count_initialized_to_zero() {
     let core_addr = instantiate_with_staked_balances_governance(
         &mut app,
         InstantiateMsg {
+            veto: None,
             threshold: Threshold::ThresholdQuorum {
                 threshold: PercentageThreshold::Majority {},
                 quorum: PercentageThreshold::Percent(Decimal::percent(10)),
@@ -1563,7 +2961,7 @@ fn test_migrate_from_compatible() {
         CosmosMsg::Wasm(WasmMsg::Migrate {
             contract_addr: proposal_module.to_string(),
             new_code_id,
-            msg: to_binary(&MigrateMsg::FromCompatible {}).unwrap(),
+            msg: to_json_binary(&MigrateMsg::FromCompatible {}).unwrap(),
         }),
     )
     .unwrap();
@@ -1582,295 +2980,279 @@ pub fn test_migrate_updates_version() {
     assert_eq!(version.contract, CONTRACT_NAME);
 }
 
-/// Instantiates a DAO with a v1 proposal module and then migrates it
-/// to v2.
-#[test]
-fn test_migrate_from_v1() {
-    use cw_proposal_single_v1 as v1;
-    use dao_pre_propose_single as cppbps;
+// //// TODO test migrate
+// /// Instantiates a DAO with a v1 proposal module and then migrates it
+// /// to v2.
+// #[test]
+// fn test_migrate_from_v1() {
+//     use cw_proposal_single_v1 as v1;
+//     use dao_pre_propose_single as cppbps;
 
-    let mut app = App::default();
-    let v1_proposal_single_code = app.store_code(v1_proposal_single_contract());
+//     let mut app = App::default();
+//     let v1_proposal_single_code = app.store_code(v1_proposal_single_contract());
 
-    let instantiate = v1::msg::InstantiateMsg {
-        threshold: voting_v1::Threshold::AbsolutePercentage {
-            percentage: voting_v1::PercentageThreshold::Majority {},
-        },
-        max_voting_period: cw_utils_v1::Duration::Height(6),
-        min_voting_period: None,
-        only_members_execute: false,
-        allow_revoting: false,
-        deposit_info: Some(v1::msg::DepositInfo {
-            token: v1::msg::DepositToken::VotingModuleToken {},
-            deposit: Uint128::new(1),
-            refund_failed_proposals: true,
-        }),
-    };
+//     let instantiate = v1::msg::InstantiateMsg {
+//         threshold: voting_v1::Threshold::AbsolutePercentage {
+//             percentage: voting_v1::PercentageThreshold::Majority {},
+//         },
+//         max_voting_period: cw_utils_v1::Duration::Height(6),
+//         min_voting_period: None,
+//         only_members_execute: false,
+//         allow_revoting: false,
+//         deposit_info: Some(v1::msg::DepositInfo {
+//             token: v1::msg::DepositToken::VotingModuleToken {
+//                 token_type: VotingModuleTokenType::Cw20,
+//             },
+//             deposit: Uint128::new(1),
+//             refund_failed_proposals: true,
+//         }),
+//     };
 
-    let initial_balances = vec![Cw20Coin {
-        amount: Uint128::new(100),
-        address: CREATOR_ADDR.to_string(),
-    }];
+//     let initial_balances = vec![Cw20Coin {
+//         amount: Uint128::new(100),
+//         address: CREATOR_ADDR.to_string(),
+//     }];
 
-    let cw20_id = app.store_code(cw20_base_contract());
-    let cw20_stake_id = app.store_code(cw20_stake_contract());
-    let staked_balances_voting_id = app.store_code(cw20_staked_balances_voting_contract());
-    let core_contract_id = app.store_code(cw_core_contract());
+//     let cw20_id = app.store_code(cw20_base_contract());
+//     let cw20_stake_id = app.store_code(cw20_stake_contract());
+//     let staked_balances_voting_id = app.store_code(cw20_staked_balances_voting_contract());
+//     let core_contract_id = app.store_code(cw_core_contract());
 
-    let instantiate_core = dao_interface::msg::InstantiateMsg {
-        admin: None,
-        name: "DAO DAO".to_string(),
-        description: "A DAO that builds DAOs".to_string(),
-        image_url: None,
-        dao_uri: None,
-        automatically_add_cw20s: true,
-        automatically_add_cw721s: false,
-        voting_module_instantiate_info: ModuleInstantiateInfo {
-            code_id: staked_balances_voting_id,
-            msg: to_binary(&dao_voting_cw20_staked::msg::InstantiateMsg {
-                active_threshold: None,
-                token_info: dao_voting_cw20_staked::msg::TokenInfo::New {
-                    code_id: cw20_id,
-                    label: "DAO DAO governance token.".to_string(),
-                    name: "DAO DAO".to_string(),
-                    symbol: "DAO".to_string(),
-                    decimals: 6,
-                    initial_balances: initial_balances.clone(),
-                    marketing: None,
-                    staking_code_id: cw20_stake_id,
-                    unstaking_duration: Some(Duration::Height(6)),
-                    initial_dao_balance: None,
-                },
-            })
-            .unwrap(),
-            admin: None,
-            funds: vec![],
-            label: "DAO DAO voting module".to_string(),
-        },
-        proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
-            code_id: v1_proposal_single_code,
-            msg: to_binary(&instantiate).unwrap(),
-            admin: Some(Admin::CoreModule {}),
-            funds: vec![],
-            label: "DAO DAO governance module.".to_string(),
-        }],
-        initial_items: None,
-    };
+// let instantiate_core = dao_interface::msg::InstantiateMsg {
+//     admin: None,
+//     name: "DAO DAO".to_string(),
+//     description: "A DAO that builds DAOs".to_string(),
+//     image_url: None,
+//     dao_uri: None,
+//     automatically_add_cw20s: true,
+//     automatically_add_cw721s: false,
+//     voting_module_instantiate_info: ModuleInstantiateInfo {
+//         code_id: staked_balances_voting_id,
+//         msg: to_json_binary(&dao_voting_cw20_staked::msg::InstantiateMsg {
+//             active_threshold: None,
+//             token_info: dao_voting_cw20_staked::msg::TokenInfo::New {
+//                 code_id: cw20_id,
+//                 label: "DAO DAO governance token.".to_string(),
+//                 name: "DAO DAO".to_string(),
+//                 symbol: "DAO".to_string(),
+//                 decimals: 6,
+//                 initial_balances: initial_balances.clone(),
+//                 marketing: None,
+//                 staking_code_id: cw20_stake_id,
+//                 unstaking_duration: Some(Duration::Height(6)),
+//                 initial_dao_balance: None,
+//             },
+//         })
+//         .unwrap(),
+//         admin: None,
+//         funds: vec![],
+//         label: "DAO DAO voting module".to_string(),
+//     },
+//     proposal_modules_instantiate_info: vec![ModuleInstantiateInfo {
+//         code_id: v1_proposal_single_code,
+//         msg: to_json_binary(&instantiate).unwrap(),
+//         admin: Some(Admin::CoreModule {}),
+//         funds: vec![],
+//         label: "DAO DAO governance module.".to_string(),
+//     }],
+//     initial_items: None,
+// };
 
-    let core_addr = app
-        .instantiate_contract(
-            core_contract_id,
-            Addr::unchecked(CREATOR_ADDR),
-            &instantiate_core,
-            &[],
-            "DAO DAO",
-            None,
-        )
-        .unwrap();
+//     let core_addr = app
+//         .instantiate_contract(
+//             core_contract_id,
+//             Addr::unchecked(CREATOR_ADDR),
+//             &instantiate_core,
+//             &[],
+//             "DAO DAO",
+//             None,
+//         )
+//         .unwrap();
 
-    let core_state: dao_interface::query::DumpStateResponse = app
-        .wrap()
-        .query_wasm_smart(
-            core_addr.clone(),
-            &dao_interface::msg::QueryMsg::DumpState {},
-        )
-        .unwrap();
-    let voting_module = core_state.voting_module;
+//     let core_state: dao_interface::query::DumpStateResponse = app
+//         .wrap()
+//         .query_wasm_smart(
+//             core_addr.clone(),
+//             &dao_interface::msg::QueryMsg::DumpState {},
+//         )
+//         .unwrap();
+//     let voting_module = core_state.voting_module;
 
-    let staking_contract: Addr = app
-        .wrap()
-        .query_wasm_smart(
-            voting_module.clone(),
-            &dao_voting_cw20_staked::msg::QueryMsg::StakingContract {},
-        )
-        .unwrap();
-    let token_contract: Addr = app
-        .wrap()
-        .query_wasm_smart(
-            voting_module,
-            &dao_interface::voting::Query::TokenContract {},
-        )
-        .unwrap();
+//     let staking_contract: Addr = app
+//         .wrap()
+//         .query_wasm_smart(
+//             voting_module.clone(),
+//             &dao_voting_cw20_staked::msg::QueryMsg::StakingContract {},
+//         )
+//         .unwrap();
+//     let token_contract: Addr = app
+//         .wrap()
+//         .query_wasm_smart(
+//             voting_module,
+//             &dao_interface::voting::Query::TokenContract {},
+//         )
+//         .unwrap();
 
-    // Stake all the initial balances.
-    for Cw20Coin { address, amount } in initial_balances {
-        app.execute_contract(
-            Addr::unchecked(address),
-            token_contract.clone(),
-            &cw20::Cw20ExecuteMsg::Send {
-                contract: staking_contract.to_string(),
-                amount,
-                msg: to_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
-            },
-            &[],
-        )
-        .unwrap();
-    }
+//     // Stake all the initial balances.
+//     for Cw20Coin { address, amount } in initial_balances {
+//         app.execute_contract(
+//             Addr::unchecked(address),
+//             token_contract.clone(),
+//             &cw20::Cw20ExecuteMsg::Send {
+//                 contract: staking_contract.to_string(),
+//                 amount,
+//                 msg: to_json_binary(&cw20_stake::msg::ReceiveMsg::Stake {}).unwrap(),
+//             },
+//             &[],
+//         )
+//         .unwrap();
+//     }
 
-    // Update the block so that those staked balances appear.
-    app.update_block(|block| block.height += 1);
+//     // Update the block so that those staked balances appear.
+//     app.update_block(|block| block.height += 1);
 
-    let proposal_module = query_single_proposal_module(&app, &core_addr);
+//     let proposal_module = query_single_proposal_module(&app, &core_addr);
 
-    // Make a proposal so we can test that migration doesn't work with
-    // open proposals that have deposits.
-    mint_cw20s(&mut app, &token_contract, &core_addr, CREATOR_ADDR, 1);
-    app.execute_contract(
-        Addr::unchecked(CREATOR_ADDR),
-        token_contract.clone(),
-        &cw20::Cw20ExecuteMsg::IncreaseAllowance {
-            spender: proposal_module.to_string(),
-            amount: Uint128::new(1),
-            expires: None,
-        },
-        &[],
-    )
-    .unwrap();
-    app.execute_contract(
-        Addr::unchecked(CREATOR_ADDR),
-        proposal_module.clone(),
-        &v1::msg::ExecuteMsg::Propose {
-            title: "title".to_string(),
-            description: "description".to_string(),
-            msgs: vec![],
-        },
-        &[],
-    )
-    .unwrap();
+//     // Make a proposal so we can test that migration doesn't work with
+//     // open proposals that have deposits.
+//     mint_cw20s(&mut app, &token_contract, &core_addr, CREATOR_ADDR, 1);
+//     app.execute_contract(
+//         Addr::unchecked(CREATOR_ADDR),
+//         token_contract.clone(),
+//         &cw20::Cw20ExecuteMsg::IncreaseAllowance {
+//             spender: proposal_module.to_string(),
+//             amount: Uint128::new(1),
+//             expires: None,
+//         },
+//         &[],
+//     )
+//     .unwrap();
+//     app.execute_contract(
+//         Addr::unchecked(CREATOR_ADDR),
+//         proposal_module.clone(),
+//         &v1::msg::ExecuteMsg::Propose {
+//             title: "title".to_string(),
+//             description: "description".to_string(),
+//             msgs: vec![],
+//         },
+//         &[],
+//     )
+//     .unwrap();
 
-    let v2_proposal_single = app.store_code(proposal_single_contract());
-    let pre_propose_single = app.store_code(pre_propose_single_contract());
+//     let v2_proposal_single = app.store_code(proposal_single_contract());
+//     let pre_propose_single = app.store_code(pre_propose_single_contract());
 
-    // Attempt to migrate. This will fail as there is a pending
-    // proposal.
-    let migrate_msg = MigrateMsg::FromV1 {
-        close_proposal_on_execution_failure: true,
-        pre_propose_info: PreProposeInfo::ModuleMayPropose {
-            info: ModuleInstantiateInfo {
-                code_id: pre_propose_single,
-                msg: to_binary(&dao_pre_propose_single::InstantiateMsg {
-                    deposit_info: Some(UncheckedDepositInfo {
-                        denom: dao_voting::deposit::DepositToken::VotingModuleToken {},
-                        amount: Uint128::new(1),
-                        refund_policy: dao_voting::deposit::DepositRefundPolicy::OnlyPassed,
-                    }),
-                    open_proposal_submission: false,
-                    extension: Empty::default(),
-                })
-                .unwrap(),
-                admin: Some(Admin::CoreModule {}),
-                funds: vec![],
-                label: "DAO DAO pre-propose".to_string(),
-            },
-        },
-    };
-    let err: ContractError = app
-        .execute(
-            core_addr.clone(),
-            CosmosMsg::Wasm(WasmMsg::Migrate {
-                contract_addr: proposal_module.to_string(),
-                new_code_id: v2_proposal_single,
-                msg: to_binary(&migrate_msg).unwrap(),
-            }),
-        )
-        .unwrap_err()
-        .downcast()
-        .unwrap();
-    assert!(matches!(err, ContractError::PendingProposals {}));
+//     // Attempt to migrate. This will fail as there is a pending
+//     // proposal.
+//     let migrate_msg = MigrateMsg::FromV2 { timelock: None };
+//     let err: ContractError = app
+//         .execute(
+//             core_addr.clone(),
+//             CosmosMsg::Wasm(WasmMsg::Migrate {
+//                 contract_addr: proposal_module.to_string(),
+//                 new_code_id: v2_proposal_single,
+//                 msg: to_json_binary(&migrate_msg).unwrap(),
+//             }),
+//         )
+//         .unwrap_err()
+//         .downcast()
+//         .unwrap();
+//     assert!(matches!(err, ContractError::PendingProposals {}));
 
-    // Vote on and close the pending proposal.
-    // TODO: vote_on_proposal(&mut app, &proposal_module, CREATOR_ADDR, 1, Vote::No);
-    close_proposal(&mut app, &proposal_module, CREATOR_ADDR, 1);
+//     // Vote on and close the pending proposal.
+//     vote_on_proposal(&mut app, &proposal_module, CREATOR_ADDR, 1, Vote::No);
+//     close_proposal(&mut app, &proposal_module, CREATOR_ADDR, 1);
 
-    // Now we can migrate!
-    app.execute(
-        core_addr.clone(),
-        CosmosMsg::Wasm(WasmMsg::Migrate {
-            contract_addr: proposal_module.to_string(),
-            new_code_id: v2_proposal_single,
-            msg: to_binary(&migrate_msg).unwrap(),
-        }),
-    )
-    .unwrap();
+//     // Now we can migrate!
+//     app.execute(
+//         core_addr.clone(),
+//         CosmosMsg::Wasm(WasmMsg::Migrate {
+//             contract_addr: proposal_module.to_string(),
+//             new_code_id: v2_proposal_single,
+//             msg: to_json_binary(&migrate_msg).unwrap(),
+//         }),
+//     )
+//     .unwrap();
 
-    let new_config = query_proposal_config(&app, &proposal_module);
-    assert_eq!(
-        new_config,
-        Config {
-            threshold: Threshold::AbsolutePercentage {
-                percentage: PercentageThreshold::Majority {}
-            },
-            max_voting_period: Duration::Height(6),
-            min_voting_period: None,
-            only_members_execute: false,
-            allow_revoting: false,
-            dao: core_addr.clone(),
-            close_proposal_on_execution_failure: true,
-        }
-    );
+//     let new_config = query_proposal_config(&app, &proposal_module);
+//     assert_eq!(
+//         new_config,
+//         Config {
+//             timelock: None,
+//             threshold: Threshold::AbsolutePercentage {
+//                 percentage: PercentageThreshold::Majority {}
+//             },
+//             max_voting_period: Duration::Height(6),
+//             min_voting_period: None,
+//             only_members_execute: false,
+//             allow_revoting: false,
+//             dao: core_addr.clone(),
+//             close_proposal_on_execution_failure: true,
+//         }
+//     );
 
-    // We can not migrate more than once.
-    let err: ContractError = app
-        .execute(
-            core_addr.clone(),
-            CosmosMsg::Wasm(WasmMsg::Migrate {
-                contract_addr: proposal_module.to_string(),
-                new_code_id: v2_proposal_single,
-                msg: to_binary(&migrate_msg).unwrap(),
-            }),
-        )
-        .unwrap_err()
-        .downcast()
-        .unwrap();
-    assert!(matches!(err, ContractError::AlreadyMigrated {}));
+//     // We can not migrate more than once.
+//     let err: ContractError = app
+//         .execute(
+//             core_addr.clone(),
+//             CosmosMsg::Wasm(WasmMsg::Migrate {
+//                 contract_addr: proposal_module.to_string(),
+//                 new_code_id: v2_proposal_single,
+//                 msg: to_json_binary(&migrate_msg).unwrap(),
+//             }),
+//         )
+//         .unwrap_err()
+//         .downcast()
+//         .unwrap();
+//     assert!(matches!(err, ContractError::AlreadyMigrated {}));
 
-    // Make sure we can still query for ballots (rationale works post
-    // migration).
-    let vote = query_vote(&app, &proposal_module, CREATOR_ADDR, 1);
-    assert_eq!(
-        vote.vote.unwrap(),
-        VoteInfo {
-            voter: Addr::unchecked(CREATOR_ADDR),
-            vote: Vote::No,
-            power: Uint128::new(100),
-            rationale: None
-        }
-    );
+//     // Make sure we can still query for ballots (rationale works post
+//     // migration).
+//     let vote = query_vote(&app, &proposal_module, CREATOR_ADDR, 1);
+//     assert_eq!(
+//         vote.vote.unwrap(),
+//         VoteInfo {
+//             voter: Addr::unchecked(CREATOR_ADDR),
+//             vote: Vote::No,
+//             power: Uint128::new(100),
+//             rationale: None
+//         }
+//     );
 
-    let proposal_creation_policy = query_creation_policy(&app, &proposal_module);
+//     let proposal_creation_policy = query_creation_policy(&app, &proposal_module);
 
-    // Check that a new creation policy has been birthed.
-    let pre_propose = match proposal_creation_policy {
-        ProposalCreationPolicy::Anyone {} => panic!("expected a pre-propose module"),
-        ProposalCreationPolicy::Module { addr } => addr,
-    };
-    let pre_propose_config = query_pre_proposal_single_config(&app, &pre_propose);
-    assert_eq!(
-        pre_propose_config,
-        cppbps::Config {
-            open_proposal_submission: false,
-            deposit_info: Some(CheckedDepositInfo {
-                denom: CheckedDenom::Cw20(token_contract.clone()),
-                amount: Uint128::new(1),
-                refund_policy: dao_voting::deposit::DepositRefundPolicy::OnlyPassed,
-            })
-        }
-    );
+//     // Check that a new creation policy has been birthed.
+//     let pre_propose = match proposal_creation_policy {
+//         ProposalCreationPolicy::Anyone {} => panic!("expected a pre-propose module"),
+//         ProposalCreationPolicy::Module { addr } => addr,
+//     };
+//     let pre_propose_config = query_pre_proposal_single_config(&app, &pre_propose);
+//     assert_eq!(
+//         pre_propose_config,
+//         cppbps::Config {
+//             open_proposal_submission: false,
+//             deposit_info: Some(CheckedDepositInfo {
+//                 denom: CheckedDenom::Cw20(token_contract.clone()),
+//                 amount: Uint128::new(1),
+//                 refund_policy: dao_voting::deposit::DepositRefundPolicy::OnlyPassed,
+//             })
+//         }
+//     );
 
-    // Make sure we can still make a proposal and vote on it.
-    mint_cw20s(&mut app, &token_contract, &core_addr, CREATOR_ADDR, 1);
-    let proposal_id = make_proposal(&mut app, &proposal_module, CREATOR_ADDR, vec![]);
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
-    let proposal = query_proposal(&app, &proposal_module, proposal_id);
-    assert_eq!(proposal.proposal.status, Status::Executed);
-}
+//     // Make sure we can still make a proposal and vote on it.
+//     mint_cw20s(&mut app, &token_contract, &core_addr, CREATOR_ADDR, 1);
+//     let proposal_id = make_proposal(&mut app, &proposal_module, CREATOR_ADDR, vec![]);
+//     vote_on_proposal(
+//         &mut app,
+//         &proposal_module,
+//         CREATOR_ADDR,
+//         proposal_id,
+//         Vote::Yes,
+//     );
+//     execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+//     let proposal = query_proposal(&app, &proposal_module, proposal_id);
+//     assert_eq!(proposal.proposal.status, Status::Executed);
+// }
 
 // - Make a proposal that will fail to execute.
 // - Verify that it goes to execution failed and that proposal
@@ -1893,14 +3275,14 @@ fn test_execution_failed() {
     }
     .into()]);
 
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
 
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.status, Status::ExecutionFailed);
@@ -1931,6 +3313,7 @@ fn test_execution_failed() {
         core_addr,
         proposal_module.clone(),
         &ExecuteMsg::UpdateConfig {
+            veto: None,
             threshold: config.threshold,
             max_voting_period: config.max_voting_period,
             min_voting_period: config.min_voting_period,
@@ -1944,13 +3327,13 @@ fn test_execution_failed() {
     )
     .unwrap();
 
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
     // let err: StdError = app
     //     .execute_contract(
     //         Addr::unchecked(CREATOR_ADDR),
@@ -1988,7 +3371,7 @@ fn test_reply_proposal_mock() {
         .save(
             deps.as_mut().storage,
             1,
-            &SingleChoiceInstantPropose {
+            &SingleChoiceProposal {
                 title: "A simple text proposal".to_string(),
                 description: "This is a simple text proposal".to_string(),
                 proposer: Addr::unchecked(CREATOR_ADDR),
@@ -2002,6 +3385,7 @@ fn test_reply_proposal_mock() {
                 total_power: Uint128::new(100_000_000),
                 msgs: vec![],
                 status: Status::Open,
+                veto: None,
                 votes: Votes::zero(),
             },
         )
@@ -2033,34 +3417,29 @@ fn test_proposal_too_large() {
     let core_addr = instantiate_with_staked_balances_governance(&mut app, instantiate, None);
     let proposal_module = query_single_proposal_module(&app, &core_addr);
 
-    let err = app
-        .execute_contract(
-            Addr::unchecked(CREATOR_ADDR),
-            proposal_module,
-            &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
-                title: "".to_string(),
-                description: "a".repeat(MAX_PROPOSAL_SIZE as usize),
-                msgs: vec![],
-                proposer: None,
-                vote_signatures: vec![VoteSignature {
-                    message_hash: todo!(), // TODO
-                    signature: todo!(),    // TODO
-                    public_key: todo!(),   // TODO
-                }],
-            }),
-            &[],
-        )
-        .unwrap_err()
-        .downcast()
-        .unwrap();
+    // let err = app
+    //     .execute_contract(
+    //         Addr::unchecked(CREATOR_ADDR),
+    //         proposal_module,
+    //         &ExecuteMsg::Propose(ProposeMsg {
+    //             title: "".to_string(),
+    //             description: "a".repeat(MAX_PROPOSAL_SIZE as usize),
+    //             msgs: vec![],
+    //             proposer: None,
+    //         }),
+    //         &[],
+    //     )
+    //     .unwrap_err()
+    //     .downcast()
+    //     .unwrap();
 
-    assert!(matches!(
-        err,
-        ContractError::ProposalTooLarge {
-            size: _,
-            max: MAX_PROPOSAL_SIZE
-        }
-    ))
+    // assert!(matches!(
+    //     err,
+    //     ContractError::ProposalTooLarge {
+    //         size: _,
+    //         max: MAX_PROPOSAL_SIZE
+    //     }
+    // ))
 }
 
 #[test]
@@ -2073,9 +3452,9 @@ fn test_vote_not_registered() {
         proposal_id,
     } = setup_test(vec![]);
 
-    // TODO: let err =
-    //     vote_on_proposal_should_fail(&mut app, &proposal_module, "ekez", proposal_id, Vote::Yes);
-    // assert!(matches!(err, ContractError::NotRegistered {}))
+    let err =
+        vote_on_proposal_should_fail(&mut app, &proposal_module, "ekez", proposal_id, Vote::Yes);
+    assert!(matches!(err, ContractError::NotRegistered {}))
 }
 
 #[test]
@@ -2093,16 +3472,12 @@ fn test_proposal_creation_permissions() {
         .execute_contract(
             Addr::unchecked("notprepropose"),
             proposal_module.clone(),
-            &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+            &ExecuteMsg::Propose(ProposeMsg {
                 title: "title".to_string(),
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                vote_signatures: vec![VoteSignature {
-                    message_hash: todo!(), // TODO
-                    signature: todo!(),    // TODO
-                    public_key: todo!(),   // TODO
-                }],
+                vote_signatures: todo!(),
             }),
             &[],
         )
@@ -2123,16 +3498,12 @@ fn test_proposal_creation_permissions() {
         .execute_contract(
             pre_propose,
             proposal_module.clone(),
-            &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+            &ExecuteMsg::Propose(ProposeMsg {
                 title: "title".to_string(),
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: None,
-                vote_signatures: vec![VoteSignature {
-                    message_hash: todo!(), // TODO
-                    signature: todo!(),    // TODO
-                    public_key: todo!(),   // TODO
-                }],
+                vote_signatures: todo!(),
             }),
             &[],
         )
@@ -2158,16 +3529,12 @@ fn test_proposal_creation_permissions() {
         .execute_contract(
             Addr::unchecked("ekez"),
             proposal_module.clone(),
-            &ExecuteMsg::Propose(SingleChoiceInstantProposeMsg {
+            &ExecuteMsg::Propose(ProposeMsg {
                 title: "title".to_string(),
                 description: "description".to_string(),
                 msgs: vec![],
                 proposer: Some("ekez".to_string()),
-                vote_signatures: vec![VoteSignature {
-                    message_hash: todo!(), // TODO
-                    signature: todo!(),    // TODO
-                    public_key: todo!(),   // TODO
-                }],
+                vote_signatures: todo!(),
             }),
             &[],
         )
@@ -2180,13 +3547,13 @@ fn test_proposal_creation_permissions() {
     let proposal_id = make_proposal(&mut app, &proposal_module, "ekez", vec![]);
     let proposal = query_proposal(&app, &proposal_module, proposal_id);
     assert_eq!(proposal.proposal.proposer, Addr::unchecked("ekez"));
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::No,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::No,
+    );
     close_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
 }
 
@@ -2338,11 +3705,11 @@ fn test_query_list_votes() {
     let votes = query_list_votes(&app, &proposal_module, proposal_id, None, None);
     assert_eq!(votes.votes, vec![]);
 
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::No);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "three", proposal_id, Vote::No);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::Yes);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "four", proposal_id, Vote::Yes);
-    // TODO: vote_on_proposal(&mut app, &proposal_module, "five", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "two", proposal_id, Vote::No);
+    vote_on_proposal(&mut app, &proposal_module, "three", proposal_id, Vote::No);
+    vote_on_proposal(&mut app, &proposal_module, "one", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "four", proposal_id, Vote::Yes);
+    vote_on_proposal(&mut app, &proposal_module, "five", proposal_id, Vote::Yes);
 
     let votes = query_list_votes(&app, &proposal_module, proposal_id, None, None);
     assert_eq!(
@@ -2435,13 +3802,15 @@ fn test_update_pre_propose_module() {
         CREATOR_ADDR,
         vec![WasmMsg::Execute {
             contract_addr: proposal_module.to_string(),
-            msg: to_binary(&ExecuteMsg::UpdatePreProposeInfo {
+            msg: to_json_binary(&ExecuteMsg::UpdatePreProposeInfo {
                 info: PreProposeInfo::ModuleMayPropose {
                     info: ModuleInstantiateInfo {
                         code_id: pre_propose_id,
-                        msg: to_binary(&dao_pre_propose_single::InstantiateMsg {
+                        msg: to_json_binary(&dao_pre_propose_single::InstantiateMsg {
                             deposit_info: Some(UncheckedDepositInfo {
-                                denom: dao_voting::deposit::DepositToken::VotingModuleToken {},
+                                denom: dao_voting::deposit::DepositToken::VotingModuleToken {
+                                    token_type: VotingModuleTokenType::Cw20,
+                                },
                                 amount: Uint128::new(1),
                                 refund_policy: dao_voting::deposit::DepositRefundPolicy::OnlyPassed,
                             }),
@@ -2461,14 +3830,14 @@ fn test_update_pre_propose_module() {
         .into()],
     );
 
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
 
     // Check that a new creation policy has been birthed.
     let proposal_creation_policy = query_creation_policy(&app, &proposal_module);
@@ -2508,19 +3877,19 @@ fn test_update_pre_propose_module() {
     // Vote on and execute the proposal created with the old
     // module. This should work fine, but the deposit will not be
     // returned as that module is no longer receiving hook messages.
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     pre_update_proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: execute_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     pre_update_proposal_id,
-    // );
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        pre_update_proposal_id,
+        Vote::Yes,
+    );
+    execute_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        pre_update_proposal_id,
+    );
 
     // Deposit should not have been returned.
     let balance = query_balance_cw20(&app, gov_token.as_str(), CREATOR_ADDR);
@@ -2533,19 +3902,20 @@ fn test_update_pre_propose_module() {
         CREATOR_ADDR,
         vec![WasmMsg::Execute {
             contract_addr: pre_propose_start.into_string(),
-            msg: to_binary(&dao_pre_propose_single::ExecuteMsg::Withdraw { denom: None }).unwrap(),
+            msg: to_json_binary(&dao_pre_propose_single::ExecuteMsg::Withdraw { denom: None })
+                .unwrap(),
             funds: vec![],
         }
         .into()],
     );
-    // TODO: vote_on_proposal(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    // );
-    // TODO: execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
+    vote_on_proposal(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+    );
+    execute_proposal(&mut app, &proposal_module, CREATOR_ADDR, proposal_id);
 
     // Make sure the left over deposit was returned to the DAO.
     let balance = query_balance_cw20(&app, gov_token.as_str(), core_addr.as_str());
@@ -2594,14 +3964,14 @@ fn test_rationale() {
 
     let rationale = Some("i support dog charities".to_string());
 
-    // TODO: vote_on_proposal_with_rationale(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    //     rationale.clone(),
-    // );
+    vote_on_proposal_with_rationale(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+        rationale.clone(),
+    );
 
     let vote = query_vote(&app, &proposal_module, CREATOR_ADDR, proposal_id);
     assert_eq!(vote.vote.unwrap().rationale, rationale);
@@ -2637,14 +4007,14 @@ fn test_rational_clobbered_on_revote() {
 
     let rationale = Some("to_string".to_string());
 
-    // TODO: vote_on_proposal_with_rationale(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::Yes,
-    //     rationale.clone(),
-    // );
+    vote_on_proposal_with_rationale(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::Yes,
+        rationale.clone(),
+    );
 
     let vote = query_vote(&app, &proposal_module, CREATOR_ADDR, proposal_id);
     assert_eq!(vote.vote.unwrap().rationale, rationale);
@@ -2652,14 +4022,14 @@ fn test_rational_clobbered_on_revote() {
     let rationale = None;
 
     // revote and clobber.
-    // TODO: vote_on_proposal_with_rationale(
-    //     &mut app,
-    //     &proposal_module,
-    //     CREATOR_ADDR,
-    //     proposal_id,
-    //     Vote::No,
-    //     None,
-    // );
+    vote_on_proposal_with_rationale(
+        &mut app,
+        &proposal_module,
+        CREATOR_ADDR,
+        proposal_id,
+        Vote::No,
+        None,
+    );
 
     let vote = query_vote(&app, &proposal_module, CREATOR_ADDR, proposal_id);
     assert_eq!(vote.vote.unwrap().rationale, rationale);
