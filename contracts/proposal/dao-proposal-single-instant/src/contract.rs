@@ -16,7 +16,6 @@ use dao_hooks::proposal::{
     new_proposal_hooks, proposal_completed_hooks, proposal_status_changed_hooks,
 };
 use dao_hooks::vote::new_vote_hooks;
-use dao_interface::msg::QueryMsg::VotingModule;
 use dao_interface::voting::IsActiveResponse;
 use dao_voting::pre_propose::{PreProposeInfo, ProposalCreationPolicy};
 use dao_voting::proposal::{DEFAULT_LIMIT, MAX_PROPOSAL_SIZE};
