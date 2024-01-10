@@ -2,7 +2,7 @@
 pub mod test_tube {
     use crate::contract::compute_sha256_hash;
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposalMsg};
-    use crate::state::VoteSignature;
+    use crate::state::VoteSignature};
     use cosmwasm_std::testing::mock_dependencies;
     use cosmwasm_std::{to_json_binary, Api, BankMsg, Coin, CosmosMsg, Uint128};
     use cw_utils::Duration;
@@ -367,6 +367,24 @@ pub mod test_tube {
 
         assert!(admin_balance_after == admin_balance_before);
     }
+
+    // TODO: fn test_dao_proposal_single_instant_ok_range_update()
+    // - This should import the range-middleware contract and be working against it
+    // let exec: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+    //     contract_addr: "osmo1ac0mdjddlu8rxxqhznjegggj8826azfjr6p8kssfue4gm2x5twqqjypz3n"
+    //         .to_string(),
+    //     msg: to_json_binary(&RangeExecuteMsg::SubmitNewRange {
+    //         new_range: NewRange {
+    //             cl_vault_address:
+    //                 "osmo18u9fdx9dahzsama4g0h7tf46hsz7gldvsw392q8al69jy4p2m79shmkam7"
+    //                     .to_string(),
+    //             lower_price: Decimal::from_str("1.0").unwrap(),
+    //             upper_price: Decimal::from_str("1.5").unwrap(),
+    //         },
+    //     })
+    //     .unwrap(),
+    //     funds: vec![],
+    // });
 
     #[test]
     #[ignore]
