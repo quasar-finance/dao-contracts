@@ -21,6 +21,7 @@ pub mod test_tube {
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use serde_json_wasm::to_string as to_json_string;
 
     /// Init constants
     const SLUG_DAO_DAO_CORE: &str = "dao_dao_core";
@@ -241,7 +242,12 @@ pub mod test_tube {
                 amount: Uint128::new(bank_send_amount),
             }],
         });
+        let asd = to_json_string(&execute_propose_msg);
+        println!("execute_propose_msg {:?}", asd);
+
+        println!("execute_propose_msg {:?}", execute_propose_msg);
         let execute_propose_msg_binary = to_json_binary(&execute_propose_msg).unwrap();
+        println!("execute_propose_msg_binary {:?}", execute_propose_msg_binary);
 
         // Creating different messages for each voter.
         // ... add as many messages as there are voters
@@ -258,11 +264,10 @@ pub mod test_tube {
         for (index, voter) in voters.iter().enumerate() {
             // Ensure that there's a message for each voter
             if let Some(clear_message) = messages.get(index) {
-                let message_hash = compute_sha256_hash(clear_message);
                 let signature = voter.signing_key().sign(clear_message).unwrap();
                 // VoteSignature
                 vote_signatures.push(VoteSignature {
-                    message_hash,
+                    message_hash: compute_sha256_hash(clear_message),
                     signature: signature.as_ref().to_vec(),
                     public_key: voter.public_key().to_bytes(),
                 });
@@ -270,6 +275,8 @@ pub mod test_tube {
                 // Do nothing in the case where there's no message for a voter
             }
         }
+        let asd = to_json_string(&vote_signatures);
+        println!("vote_signatures {:?}", asd);
 
         // Get Admin balance before send
         let admin_balance_before = bank
