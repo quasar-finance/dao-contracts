@@ -200,48 +200,6 @@ pub fn execute_propose(
         _ => return Err(ContractError::InvalidProposer {}),
     };
 
-    // Get dao-voting-cw4 contract address
-    // let dao_voting_cw4_addr: Addr = deps
-    //     .querier
-    //     .query_wasm_smart(config.dao.clone(), &VotingModule {})?;
-    // Get cw4-group contract address
-    // let cw4_group_addr: Addr = deps
-    //     .querier
-    //     .query_wasm_smart(dao_voting_cw4_addr, &GroupContract {})?;
-
-    // Get list of members
-    // let members: MemberListResponse = deps.querier.query_wasm_smart(
-    //     cw4_group_addr.clone(),
-    //     &ListMembers {
-    //         start_after: None,
-    //         limit: None,
-    //     },
-    // )?;
-
-    // Proposer check #1 - It should be a member
-    // match members
-    //     .members
-    //     .iter()
-    //     .any(|member| member.addr == proposer.clone())
-    // {
-    //     true => {
-    //         // Proposer is a member.
-    //     }
-    //     false => return Err(ContractError::InvalidProposer {}),
-    // }
-
-    // Proposer check #2 - Proposer weight weight should be zero
-    // let proposer_vote_power = get_voting_power(
-    //     deps.as_ref(),
-    //     proposer.clone(),
-    //     &config.dao,
-    //     Some(env.block.height),
-    // )?;
-
-    // if proposer_vote_power != Uint128::zero() {
-    //     return Err(ContractError::InvalidProposer {});
-    // }
-
     let voting_module: Addr = deps.querier.query_wasm_smart(
         config.dao.clone(),
         &dao_interface::msg::QueryMsg::VotingModule {},
