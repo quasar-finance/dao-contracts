@@ -3,8 +3,8 @@ use bech32::ToBase32;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, to_json_vec, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo,
-    Order, Reply, Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
+    to_json_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order, Reply,
+    Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
 };
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
 use cw4::MemberListResponse;
@@ -299,61 +299,34 @@ pub fn execute_propose(
         ));
     }
 
-    // Determine the message hash with the highest accumulated voting power
-    let message_hash_majority: Vec<u8> = if let Some((_, &max_weight)) = message_hash_counts
-        .iter()
-        .max_by_key(|&(_, &weight)| weight)
-    {
-        let max_power_hashes: Vec<Vec<u8>> = message_hash_counts
-            .iter()
-            .filter(|&(_, &weight)| weight == max_weight)
-            .map(|(hash, _)| hash.clone()) // Clone the Vec<u8> here
-            .collect();
-
-        if max_power_hashes.len() > 1 {
-            // Handle the error case where there is a tie
-            return Err(ContractError::ThresholdError(
-                ThresholdError::UnreachableThreshold {},
-            ));
-        } else {
-            // Return message_hash_majority value
-            max_power_hashes.into_iter().next().unwrap_or_default()
-        }
-    } else {
-        // Handle the case where there are no votes
-        return Err(ContractError::ThresholdError(
-            ThresholdError::UnreachableThreshold {},
-        ));
-    };
-
     let mut p_vote_attributes = vec![];
     let mut p_vote_messages = vec![];
 
     // verify and cast votes
     for vote_signature in &vote_signatures {
-        let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo")?;
-        let verified = deps
-            .api
-            .secp256k1_verify(
-                vote_signature.message_hash.as_slice(),
-                vote_signature.signature.as_slice(),
-                vote_signature.public_key.as_slice(),
-            )
-            .unwrap();
+        let (address, verified) = verify_message(deps.as_ref(), vote_signature)?;
+        let voter_address = deps.api.addr_validate(address.as_str())?;
 
         // Checking if the current voter is a member with voting power higher than 0
         let voting_power = get_voting_power(
             deps.as_ref(),
-            Addr::unchecked(voter_address.clone()),
+            voter_address.clone(),
             &config.dao,
             Some(proposal.start_height),
         )?;
         let is_member = voting_power != Uint128::zero();
 
+        // TODO: Match the message_hash too
+        let proposal_msg = msgs.get(0).unwrap();
+        let proposal_msg_adr36 = create_adr36_message(proposal_msg, &address);
+        let proposal_message_hash = compute_sha256_hash(&proposal_msg_adr36.as_bytes());
+        // TODO: Check if we want prevent the next condition so we cast only Yes votes, or we are fine with the later check
+        // let is_message_hash_matching = proposal_message_hash == vote_signature.message_hash;
+
         // If Signature has been verified and a Member address has been found
         if verified && is_member {
             // Compute yes or no vote based on majority previous computed.
-            let vote = Some(if vote_signature.message_hash == message_hash_majority {
+            let vote = Some(if vote_signature.message_hash == proposal_message_hash {
                 Vote::Yes
             } else {
                 Vote::No
@@ -366,7 +339,7 @@ pub fn execute_propose(
                     env.clone(),
                     info.clone(),
                     id,
-                    Addr::unchecked(voter_address),
+                    voter_address,
                     vote,
                     None, // rationale hardcoded to None
                 )?;
@@ -379,17 +352,6 @@ pub fn execute_propose(
         }
     }
 
-    // Validate messages to execute are matching the message_hash_majority
-    if let Some(proposal_msg) = msgs.get(0) {
-        let proposal_msg_bytes = to_json_vec(proposal_msg)?;
-        let proposal_msg_hash = compute_sha256_hash(&proposal_msg_bytes);
-
-        if proposal_msg_hash != message_hash_majority {
-            return Err(ContractError::MessageHashMismatch {});
-        }
-    }
-
-    // Execute the proposal
     let p_execute = proposal_execute(deps.branch(), env, info.clone(), id)?;
 
     Ok(Response::default()
@@ -403,6 +365,82 @@ pub fn execute_propose(
         .add_attribute("proposal_id", id.to_string())
         .add_attribute("status", proposal.status.to_string()))
 }
+
+// This is veryfing the signature for a given publicKey and messageHash.
+// In the context of this contract, is assumed that the signature is generated from an ADR36 compliant message
+fn verify_message(
+    deps: Deps,
+    vote_signature: &VoteSignature,
+) -> Result<(String, bool), ContractError> {
+    let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo")?;
+    let verified = deps
+        .api
+        .secp256k1_verify(
+            vote_signature.message_hash.as_slice(),
+            vote_signature.signature.as_slice(),
+            vote_signature.public_key.as_slice(),
+        )
+        .unwrap();
+
+    Ok((voter_address, verified))
+}
+
+pub fn create_adr36_message(cosmos_msg: &CosmosMsg<Empty>, signer: &String) -> String {
+    let message_prefix = "{\"account_number\":\"0\",\"chain_id\":\"\",\"fee\":{\"amount\":[],\"gas\":\"0\"},\"memo\":\"\",\"msgs\":[{\"type\":\"sign/MsgSignData\",\"value\":{\"data\":\"";
+    let data = create_adr36_data(cosmos_msg, signer);
+    let signer_prefix = "\",\"signer\":\"";
+    let message_suffix = "\"}}],\"sequence\":\"0\"}";
+    let message = format!(
+        "{}{}{}{}{}",
+        message_prefix, data, signer_prefix, signer, message_suffix
+    );
+
+    message
+}
+
+pub fn create_adr36_data(cosmos_msg: &CosmosMsg<Empty>, signer: &String) -> String {
+    let cosmos_msg_json = serde_json_wasm::to_string(&cosmos_msg).unwrap();
+    let encoded_data = to_json_binary(&cosmos_msg_json).unwrap();
+
+    let msg_sign_data_string = format!(
+        "{{\"type\":\"sign/MsgSignData\",\"value\":{{\"data\":\"{}\",\"signer\":\"{}\"}}}}",
+        encoded_data, signer
+    );
+
+    base64::encode(msg_sign_data_string)
+}
+
+// TODO: If this I did is not working, just copy pasta from the Keplr crate suggestion
+// https://github.com/cosmos/cosmos-sdk/blob/main/docs/architecture/adr-036-arbitrary-signature.md
+// pub fn get_cosmos_msg_adr46_message_hash(
+//     cosmos_msg: &CosmosMsg<Empty>,
+//     signer: String,
+// ) -> Result<Vec<u8>, ContractError> {
+//     let cosmos_msg_json = serde_json_wasm::to_string(&cosmos_msg).unwrap();
+//     let encoded_data = to_json_binary(&cosmos_msg_json)?;
+
+//     let msg_sign_data = json!({
+//         "type": "sign/MsgSignData",
+//         "value": {
+//             "data": encoded_data,
+//             "signer": signer
+//         }
+//     });
+
+//     let adr36_message = json!({
+//         "account_number": "0",
+//         "chain_id": "",
+//         "fee": {"amount": [], "gas": "0"},
+//         "memo": "",
+//         "msgs": [msg_sign_data],
+//         "sequence": "0"
+//     });
+
+//     let adr36_message_bytes = to_json_vec(&adr36_message)?;
+//     let message_hash = compute_sha256_hash(&adr36_message_bytes);
+
+//     Ok(message_hash)
+// }
 
 // todo: Find a better place for this method which is an helper function.
 pub fn compute_sha256_hash(message: &[u8]) -> Vec<u8> {
