@@ -1,6 +1,5 @@
 #[cfg(test)]
 pub mod test_tube {
-    use bip39::Language;
     use cosmwasm_std::testing::mock_dependencies;
     use cosmwasm_std::{to_json_binary, to_json_string, Api, BankMsg, Coin, CosmosMsg, Uint128};
     use cw_utils::Duration;
@@ -10,16 +9,17 @@ pub mod test_tube {
     use dao_voting::pre_propose::PreProposeInfo;
     use dao_voting::threshold::Threshold;
     use dao_voting_cw4::msg::GroupContract;
-    use osmosis_test_tube::cosmrs::bip32;
-    use osmosis_test_tube::cosmrs::crypto::secp256k1::SigningKey;
     use osmosis_test_tube::osmosis_std::types::cosmos::bank::v1beta1::{
         MsgSend, QueryBalanceRequest,
     };
     use osmosis_test_tube::osmosis_std::types::cosmos::base::v1beta1;
-    use osmosis_test_tube::{Account, Bank, FeeSetting};
+    use osmosis_test_tube::{Account, Bank};
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
     use std::collections::HashMap;
     use std::path::PathBuf;
+    // use bip39::Language;
+    // use osmosis_test_tube::cosmrs::bip32;
+    // use osmosis_test_tube::cosmrs::crypto::secp256k1::SigningKey;
 
     use crate::contract::{compute_sha256_hash, create_adr36_message};
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposalMsg};
@@ -588,82 +588,82 @@ pub mod test_tube {
 
     // #[test]
     // #[ignore]
-    fn _test_secp256k1_verify_from_seed() {
-        let deps = mock_dependencies();
+    // fn _test_secp256k1_verify_from_seed() {
+    //     let deps = mock_dependencies();
 
-        let mnemonic_phrase = "x x x x x x x x x x x x";
-        let mnemonic = bip39::Mnemonic::from_phrase(mnemonic_phrase, Language::English).unwrap();
+    //     let mnemonic_phrase = "x x x x x x x x x x x x";
+    //     let mnemonic = bip39::Mnemonic::from_phrase(mnemonic_phrase, Language::English).unwrap();
 
-        let seed = bip39::Seed::new(&mnemonic, "");
-        let derivation_path = "m/44'/118'/0'/0/0"
-            .parse::<bip32::DerivationPath>()
-            .unwrap();
-        let signing_key = SigningKey::derive_from_path(seed, &derivation_path).unwrap();
-        let signing_account = SigningAccount::new(
-            "osmo".to_string(),
-            signing_key,
-            FeeSetting::Auto {
-                gas_price: Coin {
-                    denom: "uosmo".to_string(),
-                    amount: Uint128::new(1000000u128),
-                },
-                gas_adjustment: 1.3 as f64,
-            },
-        );
-        println!("signing_account addy {:?}", signing_account.address());
+    //     let seed = bip39::Seed::new(&mnemonic, "");
+    //     let derivation_path = "m/44'/118'/0'/0/0"
+    //         .parse::<bip32::DerivationPath>()
+    //         .unwrap();
+    //     let signing_key = SigningKey::derive_from_path(seed, &derivation_path).unwrap();
+    //     let signing_account = SigningAccount::new(
+    //         "osmo".to_string(),
+    //         signing_key,
+    //         FeeSetting::Auto {
+    //             gas_price: Coin {
+    //                 denom: "uosmo".to_string(),
+    //                 amount: Uint128::new(1000000u128),
+    //             },
+    //             gas_adjustment: 1.3 as f64,
+    //         },
+    //     );
+    //     println!("signing_account addy {:?}", signing_account.address());
 
-        // Cosmos msg
-        let message: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
-            to_address: signing_account.address(),
-            amount: vec![Coin {
-                denom: INITIAL_BALANCE_DENOM.to_string(),
-                amount: Uint128::new(1000u128),
-            }],
-        });
+    //     // Cosmos msg
+    //     let message: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
+    //         to_address: signing_account.address(),
+    //         amount: vec![Coin {
+    //             denom: INITIAL_BALANCE_DENOM.to_string(),
+    //             amount: Uint128::new(1000u128),
+    //         }],
+    //     });
 
-        let exec_propose_msg_adr36 = create_adr36_message(
-            &to_json_string(&message).unwrap(),
-            &signing_account.address(),
-        );
-        let message_hash = compute_sha256_hash(exec_propose_msg_adr36.as_bytes());
-        println!("message_hash {:?}", message_hash);
+    //     let exec_propose_msg_adr36 = create_adr36_message(
+    //         &to_json_string(&message).unwrap(),
+    //         &signing_account.address(),
+    //     );
+    //     let message_hash = compute_sha256_hash(exec_propose_msg_adr36.as_bytes());
+    //     println!("message_hash {:?}", message_hash);
 
-        let signature = signing_account
-            .signing_key()
-            .sign(exec_propose_msg_adr36.as_bytes())
-            .unwrap();
-        println!("signature {:?}", signature);
+    //     let signature = signing_account
+    //         .signing_key()
+    //         .sign(exec_propose_msg_adr36.as_bytes())
+    //         .unwrap();
+    //     println!("signature {:?}", signature);
 
-        let verified = deps
-            .api
-            .secp256k1_verify(
-                message_hash.as_slice(),
-                signature.as_ref(),
-                signing_account.public_key().to_bytes().as_ref(),
-            )
-            .expect("Invalid signature");
+    //     let verified = deps
+    //         .api
+    //         .secp256k1_verify(
+    //             message_hash.as_slice(),
+    //             signature.as_ref(),
+    //             signing_account.public_key().to_bytes().as_ref(),
+    //         )
+    //         .expect("Invalid signature");
 
-        assert!(verified == true);
+    //     assert!(verified == true);
 
-        // // Just an Hello World
-        // let hw_string =
-        //     create_adr36_message(&"Hello World".to_string(), &signing_account.address());
-        // let hw_hash = compute_sha256_hash(hw_string.as_bytes());
-        // let hw_signature = signing_account
-        //     .signing_key()
-        //     .sign(hw_string.as_bytes())
-        //     .unwrap();
-        // println!("hw_signature {:?}", hw_signature);
+    //     // Just an Hello World
+    //     let hw_string =
+    //         create_adr36_message(&"Hello World".to_string(), &signing_account.address());
+    //     let hw_hash = compute_sha256_hash(hw_string.as_bytes());
+    //     let hw_signature = signing_account
+    //         .signing_key()
+    //         .sign(hw_string.as_bytes())
+    //         .unwrap();
+    //     println!("hw_signature {:?}", hw_signature);
 
-        // let verified = deps
-        //     .api
-        //     .secp256k1_verify(
-        //         hw_hash.as_slice(),
-        //         hw_signature.as_ref(),
-        //         signing_account.public_key().to_bytes().as_ref(),
-        //     )
-        //     .expect("Invalid signature");
+    //     let verified = deps
+    //         .api
+    //         .secp256k1_verify(
+    //             hw_hash.as_slice(),
+    //             hw_signature.as_ref(),
+    //             signing_account.public_key().to_bytes().as_ref(),
+    //         )
+    //         .expect("Invalid signature");
 
-        // assert!(verified == true);
-    }
+    //     assert!(verified == true);
+    // }
 }
