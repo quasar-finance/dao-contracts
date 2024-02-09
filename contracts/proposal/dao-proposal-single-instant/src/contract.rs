@@ -316,16 +316,13 @@ pub fn execute_propose(
         )?;
         let is_member = voting_power != Uint128::zero();
 
-        // TODO: Match the message_hash too
+        // Match the message_hash wrapped by ADR36 SignDoc and signer address
         let proposal_msg = msgs.get(0).unwrap();
         let proposal_msg_adr36 = create_adr36_message(
             &serde_json_wasm::to_string(&proposal_msg).unwrap(),
             &address,
         );
         let proposal_message_hash = compute_sha256_hash(&proposal_msg_adr36.as_bytes());
-
-        // TODO: Check if we want to prevent the next condition, so we cast only Yes votes, or we are fine with the later check.
-        // let is_message_hash_matching = proposal_message_hash == vote_signature.message_hash;
 
         // If Signature has been verified and a Member address has been found
         if verified && is_member {
@@ -399,14 +396,12 @@ pub fn create_adr36_message(data: &String, signer: &String) -> String {
     message
 }
 
-// todo: Find a better place for this method which is an helper function.
 pub fn compute_sha256_hash(message: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(message);
     hasher.finalize().to_vec()
 }
 
-// todo: Find a better place for this method which is an helper function.
 pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, ContractError> {
     let sha_hash: [u8; 32] = Sha256::digest(pub_key)
         .as_slice()
@@ -421,7 +416,6 @@ pub fn derive_addr_from_pubkey(pub_key: &[u8], hrp: &str) -> Result<String, Cont
     Ok(addr)
 }
 
-// todo: Find a better place for this method that has been downcasted from entrypoint to private method.
 fn proposal_vote(
     deps: DepsMut,
     env: Env,
@@ -531,7 +525,6 @@ fn proposal_vote(
         .add_attribute("status", prop.status.to_string()))
 }
 
-// todo: Find a better place for this method that has been downcasted from entrypoint to private method.
 fn proposal_execute(
     deps: DepsMut,
     env: Env,
