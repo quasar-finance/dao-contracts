@@ -1,7 +1,8 @@
 #[cfg(test)]
 pub mod test_tube {
+    use bip39::Language;
     use cosmwasm_std::testing::mock_dependencies;
-    use cosmwasm_std::{to_json_binary, Api, Coin, CosmosMsg, Decimal, Uint128, WasmMsg};
+    use cosmwasm_std::{to_json_binary, to_json_string, Api, BankMsg, Coin, CosmosMsg, Uint128};
     use cw_utils::Duration;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
     use dao_interface::state::Admin;
@@ -9,19 +10,20 @@ pub mod test_tube {
     use dao_voting::pre_propose::PreProposeInfo;
     use dao_voting::threshold::Threshold;
     use dao_voting_cw4::msg::GroupContract;
+    use osmosis_test_tube::cosmrs::bip32;
+    use osmosis_test_tube::cosmrs::crypto::secp256k1::SigningKey;
     use osmosis_test_tube::osmosis_std::types::cosmos::bank::v1beta1::{
         MsgSend, QueryBalanceRequest,
     };
     use osmosis_test_tube::osmosis_std::types::cosmos::base::v1beta1;
-    use osmosis_test_tube::{Account, Bank};
+    use osmosis_test_tube::{Account, Bank, FeeSetting};
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::str::FromStr;
 
     use crate::contract::{compute_sha256_hash, create_adr36_message};
     use crate::msg::{ExecuteMsg, InstantiateMsg, SingleChoiceInstantProposalMsg};
-    use crate::state::{NewRange, RangeExecuteMsg, VoteSignature};
+    use crate::state::VoteSignature;
 
     /// Init constants
     const SLUG_DAO_DAO_CORE: &str = "dao_dao_core";
@@ -115,7 +117,7 @@ pub mod test_tube {
         };
         let prop_module_instantiate_msg = InstantiateMsg {
             threshold: Threshold::AbsoluteCount {
-                threshold: Uint128::new(1u128),
+                threshold: Uint128::new(2u128),
             },
             // TODO: Create an additional test variant as below
             // threshold: Threshold::ThresholdQuorum {
@@ -229,58 +231,37 @@ pub mod test_tube {
     #[ignore]
     /// Test case of a proposal creation, voting passing and executing all-in-once, which should move gov funds from treasury.
     fn test_dao_proposal_single_instant_ok_send() {
-        let (app, contracts, admin, voters) = test_init(1);
+        let (app, contracts, admin, voters) = test_init(5);
         let bank = Bank::new(&app);
         let wasm = Wasm::new(&app);
 
         // Create proposal execute msg as bank message from treasury back to the admin account
         let bank_send_amount = 1000u128;
-        // let execute_propose_msg: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
-        //     to_address: admin.address(),
-        //     amount: vec![Coin {
-        //         denom: INITIAL_BALANCE_DENOM.to_string(),
-        //         amount: Uint128::new(bank_send_amount),
-        //     }],
-        // });
-        // println!("execute_propose_msg {:?}", execute_propose_msg);
-        // let execute_propose_msg_json = to_json_string(&execute_propose_msg).unwrap();
-        // println!("execute_propose_msg_json {:?}", execute_propose_msg_json);
-        // let execute_propose_msg_binary = to_json_binary(&execute_propose_msg).unwrap();
-        // println!(
-        //     "execute_propose_msg_binary {:?}",
-        //     execute_propose_msg_binary
-        // );
-        // let execute_propose_msg_binary2 = to_json_binary(&execute_propose_msg_json).unwrap();
-        // println!(
-        //     "execute_propose_msg_binary2 {:?}",
-        //     execute_propose_msg_binary2
-        // );
+        let execute_propose_msg_pass: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: admin.address(),
+            amount: vec![Coin {
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+                amount: Uint128::new(bank_send_amount),
+            }],
+        });
 
-        let exec_propose_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
-            funds: vec![],
-            contract_addr: "osmo1wu5krmuaywn8y2u9cgv99xepl9sk530fwnqhl2hj9qk7e3jgr0nshyhkl2"
-                .to_string(),
-            msg: to_json_binary(&RangeExecuteMsg::SubmitNewRange {
-                new_range: NewRange {
-                    upper_price: Decimal::from_str("2").unwrap(),
-                    cl_vault_address:
-                        "osmo1d8qurgqg0crmz7eye4jy8vm47l3a3582vzs7nlapxfqmvdag84zswcshj5"
-                            .to_string(),
-                    lower_price: Decimal::from_str("1").unwrap(),
-                },
-            })
-            .unwrap(),
+        let execute_propose_msg_fail: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: admin.address(),
+            amount: vec![Coin {
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+                amount: Uint128::new(bank_send_amount * 2),
+            }],
         });
 
         // Creating different messages for each voter.
         // ... add as many messages as there are voters
         // The number of items of this array should match the test_init({voters_number}) value.
         let messages: Vec<&CosmosMsg> = vec![
-            &exec_propose_msg, // A <- will pass!
-                               //exec_propose_msg_binary.as_slice(), // A <- will pass!
-                               //exec_propose_msg_binary.as_slice(), // A <- will pass!
-                               //b"Hello World!",                    // B
-                               //b"Hello World!",                    // B
+            &execute_propose_msg_pass, // A <- will pass!
+            &execute_propose_msg_pass, // A <- will pass!
+            &execute_propose_msg_fail, // B
+            &execute_propose_msg_fail, // B
+            &execute_propose_msg_fail, // B
         ];
 
         let mut vote_signatures: Vec<VoteSignature> = vec![];
@@ -289,7 +270,10 @@ pub mod test_tube {
             if let Some(clear_message) = messages.get(index) {
                 // let clear_message_adr =
                 //     get_cosmos_msg_adr46_message_hash(&clear_message, voter.address()).unwrap();
-                let clear_message_adr = create_adr36_message(clear_message, &voter.address());
+                let clear_message_adr = create_adr36_message(
+                    &to_json_string(&clear_message).unwrap(),
+                    &voter.address(),
+                );
                 println!("clear_message_adr {:?}", clear_message_adr);
                 let signature = voter
                     .signing_key()
@@ -379,7 +363,7 @@ pub mod test_tube {
                 &ExecuteMsg::Propose(SingleChoiceInstantProposalMsg {
                     title: "Title".to_string(),
                     description: "Description".to_string(),
-                    msgs: vec![exec_propose_msg],
+                    msgs: vec![execute_propose_msg_pass],
                     proposer: None,
                     vote_signatures,
                 }),
@@ -404,24 +388,6 @@ pub mod test_tube {
 
         assert!(admin_balance_after == admin_balance_before);
     }
-
-    // TODO: fn test_dao_proposal_single_instant_ok_range_update()
-    // - This should import the range-middleware contract and be working against it
-    // let exec: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
-    //     contract_addr: "osmo1ac0mdjddlu8rxxqhznjegggj8826azfjr6p8kssfue4gm2x5twqqjypz3n"
-    //         .to_string(),
-    //     msg: to_json_binary(&RangeExecuteMsg::SubmitNewRange {
-    //         new_range: NewRange {
-    //             cl_vault_address:
-    //                 "osmo18u9fdx9dahzsama4g0h7tf46hsz7gldvsw392q8al69jy4p2m79shmkam7"
-    //                     .to_string(),
-    //             lower_price: Decimal::from_str("1.0").unwrap(),
-    //             upper_price: Decimal::from_str("1.5").unwrap(),
-    //         },
-    //     })
-    //     .unwrap(),
-    //     funds: vec![],
-    // });
 
     // #[test]
     // #[ignore]
@@ -592,33 +558,21 @@ pub mod test_tube {
         let deps = mock_dependencies();
 
         for voter in voters {
-            let message: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
-                funds: vec![],
-                contract_addr: "osmo1wu5krmuaywn8y2u9cgv99xepl9sk530fwnqhl2hj9qk7e3jgr0nshyhkl2"
-                    .to_string(),
-                msg: to_json_binary(&RangeExecuteMsg::SubmitNewRange {
-                    new_range: NewRange {
-                        cl_vault_address:
-                            "osmo1d8qurgqg0crmz7eye4jy8vm47l3a3582vzs7nlapxfqmvdag84zswcshj5"
-                                .to_string(),
-                        lower_price: Decimal::from_str("1").unwrap(),
-                        upper_price: Decimal::from_str("2").unwrap(),
-                    },
-                })
-                .unwrap(),
+            let message: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
+                to_address: voter.address(),
+                amount: vec![Coin {
+                    denom: INITIAL_BALANCE_DENOM.to_string(),
+                    amount: Uint128::new(1000u128),
+                }],
             });
-            // let exec_propose_msg_json = serde_json_wasm::to_string(&message).unwrap();
-            // println!("exec_propose_msg_json {:?}", exec_propose_msg_json);
 
-            // let clear_message = to_json_vec(&message).unwrap();
-            // println!("clear_message.as_slice() {:?}", clear_message.as_slice());
-            let clear_message_string = create_adr36_message(&message, &voter.address());
+            let clear_message_string =
+                create_adr36_message(&to_json_string(&message).unwrap(), &voter.address());
             let clear_message = compute_sha256_hash(clear_message_string.as_bytes());
             let signature = voter.signing_key().sign(clear_message.as_slice()).unwrap();
 
             // Verification
             let message_hash = compute_sha256_hash(clear_message.as_slice());
-            println!("message_hash {:?}", message_hash);
             let verified = deps
                 .api
                 .secp256k1_verify(
@@ -634,65 +588,82 @@ pub mod test_tube {
 
     // #[test]
     // #[ignore]
-    // fn test_secp256k1_verify_from_seed() {
-    //     let deps = mock_dependencies();
+    fn _test_secp256k1_verify_from_seed() {
+        let deps = mock_dependencies();
 
-    //     let mnemonic_phrase = "x x x x x x x x x x x x";
-    //     let mnemonic = Mnemonic::from_phrase(mnemonic_phrase, Language::English).unwrap();
+        let mnemonic_phrase = "x x x x x x x x x x x x";
+        let mnemonic = bip39::Mnemonic::from_phrase(mnemonic_phrase, Language::English).unwrap();
 
-    //     let seed = Seed::new(&mnemonic, "");
-    //     let derivation_path = "m/44'/118'/0'/0/0".parse::<bip32::DerivationPath>().unwrap();
-    //     let signing_key = SigningKey::derive_from_path(seed, &derivation_path).unwrap();
-    //     let signing_account = SigningAccount::new(
-    //         "osmo".to_string(),
-    //         signing_key,
-    //         FeeSetting::Auto {
-    //             gas_price: Coin {
-    //                 denom: "uosmo".to_string(),
-    //                 amount: Uint128::new(1000000u128),
-    //             },
-    //             gas_adjustment: 1.3 as f64,
-    //         },
-    //     );
-    //     println!("signing_account addy {:?}", signing_account.address());
+        let seed = bip39::Seed::new(&mnemonic, "");
+        let derivation_path = "m/44'/118'/0'/0/0"
+            .parse::<bip32::DerivationPath>()
+            .unwrap();
+        let signing_key = SigningKey::derive_from_path(seed, &derivation_path).unwrap();
+        let signing_account = SigningAccount::new(
+            "osmo".to_string(),
+            signing_key,
+            FeeSetting::Auto {
+                gas_price: Coin {
+                    denom: "uosmo".to_string(),
+                    amount: Uint128::new(1000000u128),
+                },
+                gas_adjustment: 1.3 as f64,
+            },
+        );
+        println!("signing_account addy {:?}", signing_account.address());
 
-    //     let message: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
-    //         funds: vec![],
-    //         contract_addr: "osmo1wu5krmuaywn8y2u9cgv99xepl9sk530fwnqhl2hj9qk7e3jgr0nshyhkl2"
-    //             .to_string(),
-    //         msg: to_json_binary(&RangeExecuteMsg::SubmitNewRange {
-    //             new_range: NewRange {
-    //                 cl_vault_address:
-    //                     "osmo1d8qurgqg0crmz7eye4jy8vm47l3a3582vzs7nlapxfqmvdag84zswcshj5"
-    //                         .to_string(),
-    //                 lower_price: Decimal::from_str("1").unwrap(),
-    //                 upper_price: Decimal::from_str("2").unwrap(),
-    //             },
-    //         })
-    //         .unwrap(),
-    //     });
+        // Cosmos msg
+        let message: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: signing_account.address(),
+            amount: vec![Coin {
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+                amount: Uint128::new(1000u128),
+            }],
+        });
 
-    //     let exec_propose_msg_json = to_json_string(&message).unwrap();
-    //     println!("exec_propose_msg_json {:?}", exec_propose_msg_json);
-    //     let clear_message = to_json_vec(&message).unwrap();
-    //     println!("clear_message.as_slice() {:?}", clear_message.as_slice());
+        let exec_propose_msg_adr36 = create_adr36_message(
+            &to_json_string(&message).unwrap(),
+            &signing_account.address(),
+        );
+        let message_hash = compute_sha256_hash(exec_propose_msg_adr36.as_bytes());
+        println!("message_hash {:?}", message_hash);
 
-    //     let signature = signing_account.signing_key().sign(b"Hello World").unwrap();
-    //     println!("signature HelloWorld {:?}", signature);
-    //     let signature = signing_account.signing_key().sign(clear_message.as_slice()).unwrap();
-    //     println!("signature CosmosMsg {:?}", signature);
+        let signature = signing_account
+            .signing_key()
+            .sign(exec_propose_msg_adr36.as_bytes())
+            .unwrap();
+        println!("signature {:?}", signature);
 
-    //     let message_hash = compute_sha256_hash(clear_message.as_slice());
-    //     println!("message_hash {:?}", message_hash);
-    //     let verified = deps
-    //         .api
-    //         .secp256k1_verify(
-    //             message_hash.as_slice(),
-    //             signature.as_ref(),
-    //             signing_account.public_key().to_bytes().as_ref(),
-    //         )
-    //         .expect("Invalid signature");
+        let verified = deps
+            .api
+            .secp256k1_verify(
+                message_hash.as_slice(),
+                signature.as_ref(),
+                signing_account.public_key().to_bytes().as_ref(),
+            )
+            .expect("Invalid signature");
 
-    //     assert!(verified == true);
-    // }
+        assert!(verified == true);
+
+        // // Just an Hello World
+        // let hw_string =
+        //     create_adr36_message(&"Hello World".to_string(), &signing_account.address());
+        // let hw_hash = compute_sha256_hash(hw_string.as_bytes());
+        // let hw_signature = signing_account
+        //     .signing_key()
+        //     .sign(hw_string.as_bytes())
+        //     .unwrap();
+        // println!("hw_signature {:?}", hw_signature);
+
+        // let verified = deps
+        //     .api
+        //     .secp256k1_verify(
+        //         hw_hash.as_slice(),
+        //         hw_signature.as_ref(),
+        //         signing_account.public_key().to_bytes().as_ref(),
+        //     )
+        //     .expect("Invalid signature");
+
+        // assert!(verified == true);
+    }
 }

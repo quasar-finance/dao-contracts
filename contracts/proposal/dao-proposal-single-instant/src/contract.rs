@@ -318,9 +318,13 @@ pub fn execute_propose(
 
         // TODO: Match the message_hash too
         let proposal_msg = msgs.get(0).unwrap();
-        let proposal_msg_adr36 = create_adr36_message(proposal_msg, &address);
+        let proposal_msg_adr36 = create_adr36_message(
+            &serde_json_wasm::to_string(&proposal_msg).unwrap(),
+            &address,
+        );
         let proposal_message_hash = compute_sha256_hash(&proposal_msg_adr36.as_bytes());
-        // TODO: Check if we want prevent the next condition so we cast only Yes votes, or we are fine with the later check
+
+        // TODO: Check if we want to prevent the next condition, so we cast only Yes votes, or we are fine with the later check.
         // let is_message_hash_matching = proposal_message_hash == vote_signature.message_hash;
 
         // If Signature has been verified and a Member address has been found
@@ -385,62 +389,22 @@ fn verify_message(
     Ok((voter_address, verified))
 }
 
-pub fn create_adr36_message(cosmos_msg: &CosmosMsg<Empty>, signer: &String) -> String {
-    let message_prefix = "{\"account_number\":\"0\",\"chain_id\":\"\",\"fee\":{\"amount\":[],\"gas\":\"0\"},\"memo\":\"\",\"msgs\":[{\"type\":\"sign/MsgSignData\",\"value\":{\"data\":\"";
-    let data = create_adr36_data(cosmos_msg, signer);
-    let signer_prefix = "\",\"signer\":\"";
-    let message_suffix = "\"}}],\"sequence\":\"0\"}";
+pub fn create_adr36_message(data: &String, signer: &String) -> String {
+    // let message = format!(
+    //     "{{\"account_number\":\"0\",\"chain_id\":\"\",\"fee\":{{\"amount\":[],\"gas\":\"0\"}},\"memo\":\"\",\"msgs\":[{{\"type\":\"sign/MsgSignData\",\"value\":{{\"data\":\"{}\",\"signer\":\"{}\"}}}}],\"sequence\":\"0\"}}",
+    //     base64::encode(data),
+    //     signer
+    // );
+
+    // Correctly ordered ADR-36 signed object construction
     let message = format!(
-        "{}{}{}{}{}",
-        message_prefix, data, signer_prefix, signer, message_suffix
+        "{{\"chain_id\":\"\",\"account_number\":\"0\",\"sequence\":\"0\",\"fee\":{{\"gas\":\"0\",\"amount\":[]}},\"msgs\":[{{\"type\":\"sign/MsgSignData\",\"value\":{{\"signer\":\"{}\",\"data\":\"{}\"}}}}],\"memo\":\"\"}}",
+        signer,
+        base64::encode(data)
     );
 
     message
 }
-
-pub fn create_adr36_data(cosmos_msg: &CosmosMsg<Empty>, signer: &String) -> String {
-    let cosmos_msg_json = serde_json_wasm::to_string(&cosmos_msg).unwrap();
-    let encoded_data = to_json_binary(&cosmos_msg_json).unwrap();
-
-    let msg_sign_data_string = format!(
-        "{{\"type\":\"sign/MsgSignData\",\"value\":{{\"data\":\"{}\",\"signer\":\"{}\"}}}}",
-        encoded_data, signer
-    );
-
-    base64::encode(msg_sign_data_string)
-}
-
-// TODO: If this I did is not working, just copy pasta from the Keplr crate suggestion
-// https://github.com/cosmos/cosmos-sdk/blob/main/docs/architecture/adr-036-arbitrary-signature.md
-// pub fn get_cosmos_msg_adr46_message_hash(
-//     cosmos_msg: &CosmosMsg<Empty>,
-//     signer: String,
-// ) -> Result<Vec<u8>, ContractError> {
-//     let cosmos_msg_json = serde_json_wasm::to_string(&cosmos_msg).unwrap();
-//     let encoded_data = to_json_binary(&cosmos_msg_json)?;
-
-//     let msg_sign_data = json!({
-//         "type": "sign/MsgSignData",
-//         "value": {
-//             "data": encoded_data,
-//             "signer": signer
-//         }
-//     });
-
-//     let adr36_message = json!({
-//         "account_number": "0",
-//         "chain_id": "",
-//         "fee": {"amount": [], "gas": "0"},
-//         "memo": "",
-//         "msgs": [msg_sign_data],
-//         "sequence": "0"
-//     });
-
-//     let adr36_message_bytes = to_json_vec(&adr36_message)?;
-//     let message_hash = compute_sha256_hash(&adr36_message_bytes);
-
-//     Ok(message_hash)
-// }
 
 // todo: Find a better place for this method which is an helper function.
 pub fn compute_sha256_hash(message: &[u8]) -> Vec<u8> {
