@@ -1,7 +1,9 @@
 #[cfg(test)]
 pub mod test_tube {
+    use cosmwasm_schema::cw_serde;
     use cosmwasm_std::testing::mock_dependencies;
-    use cosmwasm_std::{to_json_binary, to_json_string, Api, BankMsg, Coin, CosmosMsg, Uint128};
+    use cosmwasm_std::{to_json_binary, to_json_string, Addr, Api, BankMsg, Coin, CosmosMsg, Decimal, Uint128, WasmMsg};
+    use cw4_group::msg;
     use cw_utils::Duration;
     use dao_interface::msg::InstantiateMsg as InstantiateMsgCore;
     use dao_interface::state::Admin;
@@ -9,15 +11,18 @@ pub mod test_tube {
     use dao_voting::pre_propose::PreProposeInfo;
     use dao_voting::threshold::Threshold;
     use dao_voting_cw4::msg::GroupContract;
+    use osmosis_test_tube::cosmrs::bip32::secp256k1::schnorr::signature::Signature;
+    use osmosis_test_tube::cosmrs::bip32::{self, PrivateKey};
+    use osmosis_test_tube::cosmrs::crypto::secp256k1::SigningKey;
     use osmosis_test_tube::osmosis_std::types::cosmos::bank::v1beta1::{
         MsgSend, QueryBalanceRequest,
     };
     use osmosis_test_tube::osmosis_std::types::cosmos::base::v1beta1;
-    use osmosis_test_tube::{Account, Bank};
+    use osmosis_test_tube::{Account, Bank, FeeSetting};
     use osmosis_test_tube::{Module, OsmosisTestApp, SigningAccount, Wasm};
     use std::collections::HashMap;
     use std::path::PathBuf;
-    // use bip39::Language;
+    use std::str::FromStr;
     // use osmosis_test_tube::cosmrs::bip32;
     // use osmosis_test_tube::cosmrs::crypto::secp256k1::SigningKey;
 
@@ -35,8 +40,10 @@ pub mod test_tube {
     const INITIAL_BALANCE_AMOUNT: u128 = 1_000_000_000_000_000u128;
     const INITIAL_BALANCE_DENOM: &str = "ugov";
 
+    /// setup a testing environment with a certain amount of voters and the option to add some pre-determined amount of voters
     pub fn test_init(
         voters_number: u32,
+        voters: Option<Vec<SigningAccount>>
     ) -> (
         OsmosisTestApp,
         HashMap<&'static str, String>,
@@ -57,7 +64,7 @@ pub mod test_tube {
             .unwrap();
 
         // Create voters accounts with initial funds
-        let mut voters: Vec<SigningAccount> = vec![];
+        let mut voters: Vec<SigningAccount> = voters.unwrap_or(Vec::default());
         for _ in 0..voters_number {
             voters.push(
                 app.init_account(&[Coin::new(INITIAL_BALANCE_AMOUNT, "uosmo")])
@@ -117,7 +124,7 @@ pub mod test_tube {
         };
         let prop_module_instantiate_msg = InstantiateMsg {
             threshold: Threshold::AbsoluteCount {
-                threshold: Uint128::new(2u128),
+                threshold: Uint128::new(1u128),
             },
             // TODO: Create an additional test variant as below
             // threshold: Threshold::ThresholdQuorum {
@@ -231,7 +238,7 @@ pub mod test_tube {
     #[ignore]
     /// Test case of a proposal creation, voting passing and executing all-in-once, which should move gov funds from treasury.
     fn test_dao_proposal_single_instant_ok_send() {
-        let (app, contracts, admin, voters) = test_init(5);
+        let (app, contracts, admin, voters) = test_init(5, None);
         let bank = Bank::new(&app);
         let wasm = Wasm::new(&app);
 
@@ -271,17 +278,17 @@ pub mod test_tube {
                 // let clear_message_adr =
                 //     get_cosmos_msg_adr46_message_hash(&clear_message, voter.address()).unwrap();
                 let clear_message_adr = create_adr36_message(
-                    &to_json_string(&clear_message).unwrap(),
-                    &voter.address(),
+                    to_json_string(&clear_message).unwrap(),
+                    Addr::unchecked(voter.address()),
                 );
                 println!("clear_message_adr {:?}", clear_message_adr);
                 let signature = voter
                     .signing_key()
-                    .sign(clear_message_adr.as_bytes())
+                    .sign(to_json_binary(&clear_message_adr).unwrap().as_ref())
                     .unwrap();
                 // VoteSignature
                 vote_signatures.push(VoteSignature {
-                    message_hash: compute_sha256_hash(clear_message_adr.as_bytes()),
+                    message_hash: compute_sha256_hash(to_json_binary(&clear_message_adr).unwrap().as_ref()),
                     signature: signature.as_ref().to_vec(),
                     public_key: voter.public_key().to_bytes(),
                 });
@@ -553,8 +560,203 @@ pub mod test_tube {
 
     #[test]
     #[ignore]
+    /// Test case of a proposal creation, voting passing and executing all-in-once, which should move gov funds from treasury.
+    fn test_dao_proposal_single_instant_ok_with_keplr_signature() {
+        // setup a predetermined signing account
+        let mnemonic_phrase = "meat rice vibrant must pear cannon video brisk heart breeze what bleak";
+        let mnemonic =
+            bip39::Mnemonic::from_phrase(mnemonic_phrase, bip39::Language::English).unwrap();
+        let seed = bip39::Seed::new(&mnemonic, "");
+        let derivation_path = "m/44'/118'/0'/0/0"
+            .parse::<bip32::DerivationPath>()
+            .unwrap();
+        let signing_key = SigningKey::derive_from_path(seed.clone(), &derivation_path).unwrap();
+        let signing_account = SigningAccount::new(
+            "osmo".to_string(),
+            signing_key,
+            FeeSetting::Auto {
+                gas_price: Coin {
+                    denom: "uosmo".to_string(),
+                    amount: Uint128::new(1000000u128),
+                },
+                gas_adjustment: 1.3 as f64,
+            },
+        );
+
+        assert_eq!(signing_account.address(), "osmo1ztl7mwzj4k2rusufu3pv527dw4zhjgkhff5l2g");
+
+        let (app, contracts, admin, _voters) = test_init(5, Some(vec![SigningAccount::new(signing_account.prefix().to_string(), SigningKey::derive_from_path(seed, &derivation_path).unwrap(), signing_account.fee_setting().clone())]));
+        let bank = Bank::new(&app);
+        let wasm = Wasm::new(&app);
+
+        // Create proposal execute msg as bank message from treasury back to the admin account
+        let bank_send_amount = 1000u128;
+        let proposal_msg: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: admin.address(),
+            amount: vec![Coin {
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+                amount: Uint128::new(bank_send_amount),
+            }],
+        });
+
+        #[cw_serde]
+pub enum RangeExecuteMsg {
+    /// Submit a range to the range middleware
+    SubmitNewRange { new_range: NewRange },
+}
+
+#[cw_serde]
+pub struct NewRange {
+    pub cl_vault_address: String,
+    pub lower_price: Decimal,
+    pub upper_price: Decimal,
+}
+
+        let msg = RangeExecuteMsg::SubmitNewRange { new_range: NewRange { cl_vault_address: "osmo1d8qurgqg0crmz7eye4jy8vm47l3a3582vzs7nlapxfqmvdag84zswcshj5".to_string(), lower_price: Decimal::from_str("2").unwrap(), upper_price: Decimal::from_str("3").unwrap() } };
+        let wasm_msg: CosmosMsg<WasmMsg> = CosmosMsg::Wasm(cosmwasm_std::WasmMsg::Execute { contract_addr: "osmo1wu5krmuaywn8y2u9cgv99xepl9sk530fwnqhl2hj9qk7e3jgr0nshyhkl2".into(), msg: to_json_binary(&msg).unwrap(), funds: vec![] });
+
+        println!("wasm_msg: {}", base64::encode(to_json_string(&wasm_msg).unwrap()));
+
+        assert_eq!(base64::encode(to_json_string(&wasm_msg).unwrap()), "eyJ3YXNtIjp7ImV4ZWN1dGUiOnsiY29udHJhY3RfYWRkciI6Im9zbW8xd3U1a3JtdWF5d244eTJ1OWNndjk5eGVwbDlzazUzMGZ3bnFobDJoajlxazdlM2pncjBuc2h5aGtsMiIsIm1zZyI6ImV5SnpkV0p0YVhSZmJtVjNYM0poYm1kbElqcDdJbTVsZDE5eVlXNW5aU0k2ZXlKamJGOTJZWFZzZEY5aFpHUnlaWE56SWpvaWIzTnRiekZrT0hGMWNtZHhaekJqY20xNk4yVjVaVFJxZVRoMmJUUTNiRE5oTXpVNE1uWjZjemR1YkdGd2VHWnhiWFprWVdjNE5IcHpkMk56YUdvMUlpd2liRzkzWlhKZmNISnBZMlVpT2lJeUlpd2lkWEJ3WlhKZmNISnBZMlVpT2lJekluMTlmUT09IiwiZnVuZHMiOltdfX19".to_string());
+
+        let clear_message_adr = create_adr36_message(
+            base64::encode(to_json_string(&wasm_msg).unwrap()),
+            Addr::unchecked(signing_account.address()),
+        );
+
+        // TODO check base64 of ADR36 FE and local
+        let local_adr36_base64 = base64::encode(to_json_binary(&clear_message_adr).unwrap());
+        let fe_adr36_base64 = "";
+
+
+        println!("clear_message_adr {:?}", to_json_string(&clear_message_adr).unwrap());
+        let signature = signing_account
+            .signing_key()
+            .sign(to_json_binary(&clear_message_adr).unwrap().as_ref())
+            .unwrap();
+
+        let signature_from_keplr = base64::decode("26GviYYyl+xPRz2c0wEdHBMB6DYkVUsSdvOCHz7MGxRFt6oFzFQlR4JZjngtB/bLQjTGQqH6y1L82lgJFuBASQ==").unwrap();
+
+        let deps = mock_dependencies();
+        let verified_keplr = deps
+                .api
+                .secp256k1_verify(
+                    compute_sha256_hash(to_json_binary(&clear_message_adr).unwrap().as_ref()).as_ref(),
+                    signature_from_keplr.as_ref(),
+                    signing_account.public_key().to_bytes().as_ref(),
+                )
+                .expect("Invalid signature");
+        assert!(verified_keplr, "could not verify the adr36 message");
+        assert_eq!(signature.as_bytes(), signature_from_keplr);
+
+        let vote_signature = VoteSignature {
+                message_hash: compute_sha256_hash(to_json_binary(&clear_message_adr).unwrap().as_ref()),
+                signature: signature.as_ref().to_vec(),
+                public_key: signing_account.public_key().to_bytes(),
+            };
+
+        // Get Admin balance before send
+        let admin_balance_before = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+
+        // Execute bank send from admin to treasury
+        bank.send(
+            MsgSend {
+                from_address: admin.address(),
+                to_address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                amount: vec![v1beta1::Coin {
+                    denom: INITIAL_BALANCE_DENOM.to_string(),
+                    amount: bank_send_amount.to_string(),
+                }],
+            },
+            &admin,
+        )
+        .unwrap();
+
+        // Get Admin balance after send
+        let admin_balance_after_send = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        let admin_balance_after = admin_balance_after_send
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse after balance");
+        let admin_balance_before = admin_balance_before
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse before balance");
+        assert!(admin_balance_after == admin_balance_before - bank_send_amount);
+
+        // Get treasury balance after send
+        let treasury_balance_after_send = bank
+            .query_balance(&QueryBalanceRequest {
+                address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        let treasury_balance_after = treasury_balance_after_send
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse after balance");
+        assert!(treasury_balance_after == bank_send_amount);
+
+        // Execute execute_propose (proposal, voting and execution in one single workflow)
+        let _execute_propose_resp = wasm
+            .execute(
+                contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
+                &ExecuteMsg::Propose(SingleChoiceInstantProposalMsg {
+                    title: "Title".to_string(),
+                    description: "Description".to_string(),
+                    msgs: vec![proposal_msg],
+                    proposer: None,
+                    vote_signatures: vec![vote_signature],
+                }),
+                &vec![],
+                &admin,
+            )
+            .unwrap();
+
+        // Get Admin balance after proposal
+        let admin_balance_after_proposal = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        let admin_balance_after = admin_balance_after_proposal
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse after balance");
+
+        assert!(admin_balance_after == admin_balance_before);
+    }
+
+
+    #[test]
+    #[ignore]
     fn test_secp256k1_verify() {
-        let (_app, _contracts, _admin, voters) = test_init(10);
+        let (_app, _contracts, _admin, voters) = test_init(10, None);
         let deps = mock_dependencies();
 
         for voter in voters {
@@ -567,8 +769,8 @@ pub mod test_tube {
             });
 
             let clear_message_string =
-                create_adr36_message(&to_json_string(&message).unwrap(), &voter.address());
-            let clear_message = compute_sha256_hash(clear_message_string.as_bytes());
+                create_adr36_message(to_json_string(&message).unwrap(), Addr::unchecked(voter.address()));
+            let clear_message = compute_sha256_hash(&to_json_binary(&clear_message_string).unwrap().as_ref());
             let signature = voter.signing_key().sign(clear_message.as_slice()).unwrap();
 
             // Verification

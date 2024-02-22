@@ -49,6 +49,7 @@ voting-v1 = { workspace = true }
 cw-proposal-single-v1 = { workspace = true, features = ["library"] }
 
 [dev-dependencies]
+tiny-bip39 = "1.0.0"
 anyhow = { workspace = true }
 cosmwasm-schema = { workspace = true }
 cw-multi-test = { workspace = true }

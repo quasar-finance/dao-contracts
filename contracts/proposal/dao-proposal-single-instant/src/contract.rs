@@ -1,10 +1,10 @@
 use crate::msg::SingleChoiceInstantProposalMsg as ProposeMsg;
 use bech32::ToBase32;
+use cosmwasm_schema::cw_serde;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order, Reply,
-    Response, StdResult, Storage, SubMsg, Uint128, WasmMsg,
+    attr, to_json_binary, Addr, Binary, Coin, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Order, Reply, Response, StdResult, Storage, SubMsg, Uint128, WasmMsg
 };
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
 use cw4::MemberListResponse;
@@ -31,6 +31,7 @@ use ripemd::{Digest as RipDigest, Ripemd160};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::ops::Add;
 
 use crate::msg::MigrateMsg;
 use crate::proposal::{next_proposal_id, SingleChoiceProposal};
@@ -275,6 +276,8 @@ pub fn execute_propose(
 
     // sum vote counts based on member weight / voting power
     for vote_signature in &vote_signatures {
+        // TODO this hardcode limits us to osmosis, making this dynaminc
+        // should also include a validation step for Addr::unchecked(voter_address)
         let voter_address = derive_addr_from_pubkey(&vote_signature.public_key, "osmo").unwrap();
 
         let vote_power = get_voting_power(
@@ -315,21 +318,40 @@ pub fn execute_propose(
             Some(proposal.start_height),
         )?;
         let is_member = voting_power != Uint128::zero();
+        p_vote_attributes.push(attr("is_member", is_member.to_string()));
 
         // Match the message_hash wrapped by ADR36 SignDoc and signer address
         let proposal_msg = msgs.get(0).unwrap();
         let proposal_msg_adr36 = create_adr36_message(
-            &serde_json_wasm::to_string(&proposal_msg).unwrap(),
-            &address,
+            serde_json_wasm::to_string(&proposal_msg).unwrap(),
+            deps.api.addr_validate(&address)?,
         );
-        let proposal_message_hash = compute_sha256_hash(&proposal_msg_adr36.as_bytes());
+        let proposal_message_hash = compute_sha256_hash(to_json_binary(&proposal_msg_adr36).unwrap().as_ref());
+
+        p_vote_attributes.push(attr("proposal_msg", format!("{:?}", proposal_msg)));
+        p_vote_attributes.push(attr(
+            "proposal_msg_adr36",
+            format!("{:?}", proposal_msg_adr36),
+        ));
+        p_vote_attributes.push(attr(
+            "proposal_message_hash",
+            format!("{:?}", proposal_message_hash),
+        ));
 
         // If Signature has been verified and a Member address has been found
         if verified && is_member {
             // Compute yes or no vote based on majority previous computed.
             let vote = Some(if vote_signature.message_hash == proposal_message_hash {
+                p_vote_attributes.push(attr(
+                    "yes_vote_signature_message_hash",
+                    format!("{:?}", vote_signature.message_hash),
+                ));
                 Vote::Yes
             } else {
+                p_vote_attributes.push(attr(
+                    "no_vote_signature_message_hash",
+                    format!("{:?}", vote_signature.message_hash),
+                ));
                 Vote::No
             });
 
@@ -386,14 +408,67 @@ fn verify_message(
     Ok((voter_address, verified))
 }
 
-pub fn create_adr36_message(data: &String, signer: &String) -> String {
-    let message = format!(
-        "{{\"chain_id\":\"\",\"account_number\":\"0\",\"sequence\":\"0\",\"fee\":{{\"gas\":\"0\",\"amount\":[]}},\"msgs\":[{{\"type\":\"sign/MsgSignData\",\"value\":{{\"signer\":\"{}\",\"data\":\"{}\"}}}}],\"memo\":\"\"}}",
-        signer,
-        base64::encode(data)
-    );
+pub(crate) fn create_adr36_message(data: String, signer: Addr) -> Adr36Message {
+    let message = Adr36Message::new(signer, data);
+    // let message = format!(
+    //     "{{\"chain_id\":\"\",\"account_number\":\"0\",\"sequence\":\"0\",\"fee\":{{\"gas\":\"0\",\"amount\":[]}},\"msgs\":[{{\"type\":\"sign/MsgSignData\",\"value\":{{\"signer\":\"{}\",\"data\":\"{}\"}}}}],\"memo\":\"\"}}",
+    //     signer,
+    //     base64::encode(data)
+    // );
 
     message
+}
+
+#[cw_serde]
+pub(crate) struct Adr36Message {
+    chain_id: String,
+    account_number: String,
+    sequence: String,
+    fee: Fee,
+    msgs: Vec<Msg>,
+    memo: String,
+}
+
+impl Adr36Message {
+    fn new(signer: Addr, data: String) -> Adr36Message {
+        Adr36Message { chain_id: "".to_string(), account_number: "0".to_string(), sequence: "0".to_string(), fee: Fee::default(), msgs: vec![Msg::new(signer, data)], memo: "".to_string()  }
+    }
+}
+
+#[cw_serde]
+struct Fee {
+    gas: u32,
+    amount: Vec<Coin>,
+}
+
+impl Default for Fee {
+    fn default() -> Self {
+        Self { gas: Default::default(), amount: Default::default() }
+    }
+}
+
+#[cw_serde]
+struct Msg {
+    r#type: String,
+    value: Value,
+}
+
+impl Msg {
+    fn new(signer: Addr, data: String) -> Msg {
+        Msg { r#type: "sign/MsgSignData".to_string(), value: Value::new(signer, data)}
+    }
+}
+
+#[cw_serde]
+struct Value {
+    signer: Addr,
+    data: String,
+}
+
+impl Value {
+    fn new(signer: Addr, data: String) -> Value {
+        Value { signer, data }
+    }
 }
 
 pub fn compute_sha256_hash(message: &[u8]) -> Vec<u8> {
