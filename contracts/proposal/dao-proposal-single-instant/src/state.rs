@@ -1,4 +1,8 @@
-use cosmwasm_schema::cw_serde;
+use crate::proposal::SingleChoiceProposal;
+use cosmwasm_schema::{
+    cw_serde,
+    serde::{self, Deserialize, Deserializer, Serializer},
+};
 use cosmwasm_std::{Addr, Uint128};
 use cw_hooks::Hooks;
 use cw_storage_plus::{Item, Map};
@@ -7,17 +11,33 @@ use dao_voting::{
     pre_propose::ProposalCreationPolicy, threshold::Threshold, veto::VetoConfig, voting::Vote,
 };
 
-use crate::proposal::SingleChoiceProposal;
-
 /// A vote cast for an instant proposal containing message_hash and message_signature.
 #[cw_serde]
 pub struct VoteSignature {
     /// Message hash
+    #[serde(serialize_with = "as_base64", deserialize_with = "from_base64")]
     pub message_hash: Vec<u8>,
     /// Signature of message hash
+    #[serde(serialize_with = "as_base64", deserialize_with = "from_base64")]
     pub signature: Vec<u8>,
     /// Public key that signed message hash
+    #[serde(serialize_with = "as_base64", deserialize_with = "from_base64")]
     pub public_key: Vec<u8>,
+}
+
+fn as_base64<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&base64::encode(bytes))
+}
+
+fn from_base64<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    base64::decode(&s).map_err(serde::de::Error::custom)
 }
 
 /// A vote cast for a proposal.

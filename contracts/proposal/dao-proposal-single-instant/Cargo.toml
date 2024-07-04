@@ -23,6 +23,8 @@ dao-voting-cw4 = { workspace = true } # moved for single-instant
 sha2 = { version = "0.10.7"}
 ripemd = "0.1.1" # this could be deprecated by using sha2 only
 bech32 = "0.9.0" # moved for single-instant
+serde-json-wasm = "1.0.1"
+base64 = "0.21.7"
 
 cosmwasm-std = { workspace = true, features = ["ibc3"] }
 cosmwasm-storage = { workspace = true }
@@ -64,5 +66,4 @@ cw721-base = { workspace = true }
 cw4 = { workspace = true }
 cw4-group = { workspace = true }
 cw-core-v1 = { workspace = true, features = ["library"] }
-#cosmrs = { workspace = true } # added for single-instant
 osmosis-test-tube = { workspace = true } # added for single-instant
