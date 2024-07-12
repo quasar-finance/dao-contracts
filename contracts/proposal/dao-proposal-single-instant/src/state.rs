@@ -1,9 +1,6 @@
 use crate::proposal::SingleChoiceProposal;
-use cosmwasm_schema::{
-    cw_serde,
-    serde::{self, Deserialize, Deserializer, Serializer},
-};
-use cosmwasm_std::{Addr, CosmosMsg, Empty, Uint128};
+use cosmwasm_schema::cw_serde;
+use cosmwasm_std::{Addr, Uint128};
 use cw_hooks::Hooks;
 use cw_storage_plus::{Item, Map};
 use cw_utils::Duration;

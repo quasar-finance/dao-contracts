@@ -235,8 +235,72 @@ pub mod test_tube {
         let bank = Bank::new(&app);
         let wasm = Wasm::new(&app);
 
-        // Create proposal execute msg as bank message from treasury back to the admin account
+        // Get Admin balance before send
         let bank_send_amount = 1000u128;
+        let admin_balance_before = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+
+        // Execute bank send from admin to treasury
+        bank.send(
+            MsgSend {
+                from_address: admin.address(),
+                to_address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                amount: vec![v1beta1::Coin {
+                    denom: INITIAL_BALANCE_DENOM.to_string(),
+                    amount: bank_send_amount.to_string(),
+                }],
+            },
+            &admin,
+        )
+        .unwrap();
+
+        // Get Admin balance after send
+        let admin_balance_after_send = bank
+            .query_balance(&QueryBalanceRequest {
+                address: admin.address(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        let admin_balance_after = admin_balance_after_send
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse after balance");
+        let admin_balance_before = admin_balance_before
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse before balance");
+        assert!(admin_balance_after == admin_balance_before - bank_send_amount);
+
+        // Get treasury balance after send
+        let treasury_balance_after_send = bank
+            .query_balance(&QueryBalanceRequest {
+                address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                denom: INITIAL_BALANCE_DENOM.to_string(),
+            })
+            .unwrap()
+            .balance
+            .expect("failed to query balance");
+        let treasury_balance_after = treasury_balance_after_send
+            .amount
+            .parse::<u128>()
+            .expect("Failed to parse after balance");
+        assert!(treasury_balance_after == bank_send_amount);
+
+        // Create proposal execute msg as bank message from treasury back to the admin account
         let execute_propose_msg_pass: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
             to_address: admin.address(),
             amount: vec![Coin {
@@ -304,70 +368,6 @@ pub mod test_tube {
                 // Do nothing in the case where there's no message for a voter
             }
         }
-
-        // Get Admin balance before send
-        let admin_balance_before = bank
-            .query_balance(&QueryBalanceRequest {
-                address: admin.address(),
-                denom: INITIAL_BALANCE_DENOM.to_string(),
-            })
-            .unwrap()
-            .balance
-            .expect("failed to query balance");
-
-        // Execute bank send from admin to treasury
-        bank.send(
-            MsgSend {
-                from_address: admin.address(),
-                to_address: contracts
-                    .get(SLUG_DAO_DAO_CORE)
-                    .expect("Treasury address not found")
-                    .clone(),
-                amount: vec![v1beta1::Coin {
-                    denom: INITIAL_BALANCE_DENOM.to_string(),
-                    amount: bank_send_amount.to_string(),
-                }],
-            },
-            &admin,
-        )
-        .unwrap();
-
-        // Get Admin balance after send
-        let admin_balance_after_send = bank
-            .query_balance(&QueryBalanceRequest {
-                address: admin.address(),
-                denom: INITIAL_BALANCE_DENOM.to_string(),
-            })
-            .unwrap()
-            .balance
-            .expect("failed to query balance");
-        let admin_balance_after = admin_balance_after_send
-            .amount
-            .parse::<u128>()
-            .expect("Failed to parse after balance");
-        let admin_balance_before = admin_balance_before
-            .amount
-            .parse::<u128>()
-            .expect("Failed to parse before balance");
-        assert!(admin_balance_after == admin_balance_before - bank_send_amount);
-
-        // Get treasury balance after send
-        let treasury_balance_after_send = bank
-            .query_balance(&QueryBalanceRequest {
-                address: contracts
-                    .get(SLUG_DAO_DAO_CORE)
-                    .expect("Treasury address not found")
-                    .clone(),
-                denom: INITIAL_BALANCE_DENOM.to_string(),
-            })
-            .unwrap()
-            .balance
-            .expect("failed to query balance");
-        let treasury_balance_after = treasury_balance_after_send
-            .amount
-            .parse::<u128>()
-            .expect("Failed to parse after balance");
-        assert!(treasury_balance_after == bank_send_amount);
 
         // Execute execute_propose (proposal, voting and execution in one single workflow)
         let _execute_propose_resp = wasm
@@ -557,8 +557,25 @@ pub mod test_tube {
         let bank = Bank::new(&app);
         let wasm = Wasm::new(&app);
 
-        // Create proposal execute msg as bank message from treasury back to the admin account
+        // Execute bank send from admin to treasury, this is just a preparation step to allow the proposal to be executed.
         let bank_send_amount = 1000u128;
+        bank.send(
+            MsgSend {
+                from_address: admin.address(),
+                to_address: contracts
+                    .get(SLUG_DAO_DAO_CORE)
+                    .expect("Treasury address not found")
+                    .clone(),
+                amount: vec![v1beta1::Coin {
+                    denom: INITIAL_BALANCE_DENOM.to_string(),
+                    amount: bank_send_amount.to_string(),
+                }],
+            },
+            &admin,
+        )
+        .unwrap();
+
+        // Create proposal execute msg as bank message from treasury back to the admin account
         let execute_propose_msg_pass: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
             to_address: admin.address(),
             amount: vec![Coin {
@@ -606,71 +623,8 @@ pub mod test_tube {
             }
         }
 
-        // Get Admin balance before send
-        let admin_balance_before = bank
-            .query_balance(&QueryBalanceRequest {
-                address: admin.address(),
-                denom: INITIAL_BALANCE_DENOM.to_string(),
-            })
-            .unwrap()
-            .balance
-            .expect("failed to query balance");
-
-        // Execute bank send from admin to treasury
-        bank.send(
-            MsgSend {
-                from_address: admin.address(),
-                to_address: contracts
-                    .get(SLUG_DAO_DAO_CORE)
-                    .expect("Treasury address not found")
-                    .clone(),
-                amount: vec![v1beta1::Coin {
-                    denom: INITIAL_BALANCE_DENOM.to_string(),
-                    amount: bank_send_amount.to_string(),
-                }],
-            },
-            &admin,
-        )
-        .unwrap();
-
-        // Get Admin balance after send
-        let admin_balance_after_send = bank
-            .query_balance(&QueryBalanceRequest {
-                address: admin.address(),
-                denom: INITIAL_BALANCE_DENOM.to_string(),
-            })
-            .unwrap()
-            .balance
-            .expect("failed to query balance");
-        let admin_balance_after = admin_balance_after_send
-            .amount
-            .parse::<u128>()
-            .expect("Failed to parse after balance");
-        let admin_balance_before = admin_balance_before
-            .amount
-            .parse::<u128>()
-            .expect("Failed to parse before balance");
-        assert!(admin_balance_after == admin_balance_before - bank_send_amount);
-
-        // Get treasury balance after send
-        let treasury_balance_after_send = bank
-            .query_balance(&QueryBalanceRequest {
-                address: contracts
-                    .get(SLUG_DAO_DAO_CORE)
-                    .expect("Treasury address not found")
-                    .clone(),
-                denom: INITIAL_BALANCE_DENOM.to_string(),
-            })
-            .unwrap()
-            .balance
-            .expect("failed to query balance");
-        let treasury_balance_after = treasury_balance_after_send
-            .amount
-            .parse::<u128>()
-            .expect("Failed to parse after balance");
-        assert!(treasury_balance_after == bank_send_amount);
-
         // Execute execute_propose (proposal, voting and execution in one single workflow)
+        // This is the first, legit, execution of the proposal. We expect it to be succeed.
         wasm.execute(
             contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
             &ExecuteMsg::Propose(SingleChoiceInstantProposalMsg {
@@ -688,7 +642,8 @@ pub mod test_tube {
         )
         .unwrap();
 
-        // This time we expect the proposal to fail due to replay
+        // Execute again execute_propose using the same payload.
+        // This time we expect the proposal to fail due to replay of the nonce previously used.
         let execute_proposal_resp = wasm
             .execute(
                 contracts.get(SLUG_DAO_PROPOSAL_SINGLE_INSTANT).unwrap(),
@@ -710,22 +665,6 @@ pub mod test_tube {
         assert!(
             matches!(execute_proposal_resp, ExecuteError { msg } if msg.contains("nonce has been already used"))
         );
-
-        // Get Admin balance after proposal
-        let admin_balance_after_proposal = bank
-            .query_balance(&QueryBalanceRequest {
-                address: admin.address(),
-                denom: INITIAL_BALANCE_DENOM.to_string(),
-            })
-            .unwrap()
-            .balance
-            .expect("failed to query balance");
-        let admin_balance_after = admin_balance_after_proposal
-            .amount
-            .parse::<u128>()
-            .expect("Failed to parse after balance");
-
-        assert!(admin_balance_after == admin_balance_before);
     }
 
     #[test]
